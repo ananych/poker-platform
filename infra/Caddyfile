@@ -1,0 +1,13 @@
+# Same-origin TLS front door (SDD §12): HTTPS/WSS, secure headers, one origin for
+# web + API so the HttpOnly SameSite=Lax session cookie and Origin checks just work.
+{$DOMAIN} {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+	@api path /api/* /ws/* /health/*
+	reverse_proxy @api api:8000
+	# /metrics is not routed publicly; scrape it on the private network.
+	reverse_proxy web:3000
+}

@@ -1,0 +1,32 @@
+# Railway gateway: the ONLY public service. Railway terminates TLS at its edge and
+# forwards plain HTTP to $PORT. One origin for web + API keeps the HttpOnly
+# SameSite=Lax session cookie and the WebSocket Origin check working
+# (*.up.railway.app is a public suffix, so separate web/api domains would be cross-site).
+{
+	auto_https off
+	admin off
+	servers {
+		# only Railway's edge can reach this container; trust its X-Forwarded-* headers
+		trusted_proxies static 0.0.0.0/0 ::/0
+	}
+}
+
+:{$PORT:8080} {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+
+	# REST, WebSocket and health go to the API (WebSocket upgrades are proxied automatically)
+	@api path /api/* /ws/* /health/*
+	reverse_proxy @api {$API_UPSTREAM:api.railway.internal:8000} {
+		header_up X-Forwarded-Proto https
+	}
+
+	# /metrics is intentionally NOT routed publicly
+	@metrics path /metrics
+	respond @metrics 404
+
+	reverse_proxy {$WEB_UPSTREAM:web.railway.internal:3000}
+}

@@ -1,0 +1,53 @@
+# Single-host production stack: Caddy (TLS) -> web (Next.js) + api (FastAPI, ONE worker)
+# -> PostgreSQL. Prefer a managed Postgres in real deployments: set POKER_DATABASE_URL and
+# remove the `db` service. Usage:
+#   DOMAIN=poker.example.com docker compose -f infra/docker-compose.prod.yml --env-file .env.prod up -d --build
+name: poker-prod
+services:
+  caddy:
+    image: caddy:2.8-alpine
+    environment: { DOMAIN: "${DOMAIN:?set DOMAIN}" }
+    ports: ["80:80", "443:443"]
+    volumes: [./Caddyfile:/etc/caddy/Caddyfile:ro, caddy_data:/data, caddy_config:/config]
+    depends_on: [web, api]
+    restart: unless-stopped
+
+  web:
+    build: { context: ../apps/web }
+    restart: unless-stopped
+
+  api:
+    build: ../services/api
+    environment:
+      POKER_ENV: prod
+      POKER_DATABASE_URL: "${POKER_DATABASE_URL:-postgresql+asyncpg://poker:${POSTGRES_PASSWORD}@db:5432/poker}"
+      POKER_DATA_ENCRYPTION_KEY: "${POKER_DATA_ENCRYPTION_KEY:?set POKER_DATA_ENCRYPTION_KEY}"
+      POKER_METRICS_TOKEN: "${POKER_METRICS_TOKEN:?set POKER_METRICS_TOKEN}"
+      POKER_ALLOWED_ORIGINS: '["https://${DOMAIN}"]'
+      POKER_COOKIE_SECURE: "true"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/health/ready')"]
+      interval: 10s
+      retries: 30
+    depends_on:
+      db: { condition: service_healthy }
+    restart: unless-stopped
+    stop_grace_period: 20s
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: poker
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}"
+      POSTGRES_DB: poker
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U poker"]
+      interval: 5s
+      retries: 20
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:
