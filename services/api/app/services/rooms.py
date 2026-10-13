@@ -130,7 +130,7 @@ async def join_room(
     if not token_ok:
         for k in keys:
             password_guess_limiter.penalize(k)
-        raise ServiceError("UNAUTHORIZED", "Invalid invitation link.")
+        raise ServiceError("INVALID_INVITE", "Invalid invitation link.")
     if not await asyncio.to_thread(verify_password, pw_hash, password or ""):
         for k in keys:
             password_guess_limiter.penalize(k)
@@ -140,7 +140,7 @@ async def join_room(
         room = tx.room
         require_open(room)
         if room.invite_token_hash != hash_token(invite_token or ""):
-            raise ServiceError("UNAUTHORIZED", "Invalid invitation link.")  # rotated meanwhile
+            raise ServiceError("INVALID_INVITE", "Invalid invitation link.")  # rotated meanwhile
         ban = await tx.db.scalar(
             select(RoomBan).where(
                 RoomBan.room_id == room_id,

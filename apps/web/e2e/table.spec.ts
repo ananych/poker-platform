@@ -42,7 +42,7 @@ test("phone host + desktop guest play a hand", async ({ browser }) => {
   // host sits at seat 1
   await host.getByRole("button", { name: "坐到 1 號位" }).click();
   await host.getByRole("button", { name: "坐下", exact: true }).click();
-  await expect(host.getByText("Andrew（你）")).toBeVisible();
+  await expect(host.locator("[data-me]")).toContainText("Andrew");
 
   // guest joins via invite + password, sits at seat 4
   await guest.goto(invite);
@@ -55,7 +55,7 @@ test("phone host + desktop guest play a hand", async ({ browser }) => {
   await guest.waitForURL(/\/rooms\/[^/]+$/);
   await guest.getByRole("button", { name: "坐到 4 號位" }).click();
   await guest.getByRole("button", { name: "坐下", exact: true }).click();
-  await expect(guest.getByText("Bob（你）")).toBeVisible();
+  await expect(guest.locator("[data-me]")).toContainText("Bob");
   await expect(host.getByText("Bob", { exact: true })).toBeVisible();
 
   // host starts the hand from the phone

@@ -1,7 +1,8 @@
 import { parseCard } from "@/lib/poker";
 
-type Size = "sm" | "md" | "lg";
+type Size = "xs" | "sm" | "md" | "lg";
 const SIZES: Record<Size, string> = {
+  xs: "w-5 h-7 text-[10px] rounded-sm",
   sm: "w-7 h-10 text-[11px] rounded",
   md: "w-10 h-14 text-sm rounded-md",
   lg: "w-12 h-[4.25rem] text-base rounded-md sm:w-14 sm:h-20 sm:text-lg",

@@ -52,6 +52,17 @@ export function rankText(t: TFn, rank: string | undefined | null): string {
   return RANKS.has(rank) ? t(`rank.${rank}` as MsgKey) : rank;
 }
 
+/** Client-side mirror of the server's room-config rules (server still validates). */
+export function configError(c: { sb: number; bb: number; min_buyin: number; max_buyin: number }):
+  MsgKey | null {
+  const vals = [c.sb, c.bb, c.min_buyin, c.max_buyin];
+  if (vals.some((v) => !Number.isInteger(v) || v <= 0)) return "cfg.err_int";
+  if (c.sb >= c.bb) return "cfg.err_blinds";
+  if (c.min_buyin > c.max_buyin) return "cfg.err_range";
+  if (c.min_buyin < c.bb) return "cfg.err_min_bb";
+  return null;
+}
+
 /** Signed chip delta, e.g. +1,200 / −300 / 0. */
 export function signed(n: number): string {
   if (n > 0) return `+${chips(n)}`;

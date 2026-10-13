@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { Card } from "./Card";
 import { api, errorText } from "@/lib/api";
-import { chips } from "@/lib/poker";
+import { signed } from "@/lib/poker";
 import type { HandSummary } from "@/lib/types";
 import { useT } from "@/lib/i18n";
 
@@ -27,15 +27,17 @@ export function HistoryPanel({ roomId, refreshKey }: { roomId: string; refreshKe
       {err && <p className="text-red-400">{err}</p>}
       {items.length === 0 && !err && <p className="text-xs text-neutral-500">{t("hist.empty")}</p>}
       {items.map((h) => {
-        const winners = h.players.filter((p) => p.won > 0);
+        const net = (p: { won: number; net?: number }) => p.net ?? p.won;
+        const winners = h.players.filter((p) => p.won > 0 && net(p) > 0);
+        const mine = h.my_net ?? h.my_result;
         return (
           <Link key={h.hand_id} href={`/rooms/${roomId}/hands/${h.hand_id}`}
                 className="block rounded-lg bg-neutral-900 p-2 hover:bg-neutral-800">
             <div className="flex items-center justify-between text-xs text-neutral-400">
               <span>#{h.ordinal} · {h.blinds[0]}/{h.blinds[1]}</span>
               {h.my_seat !== null && (
-                <span className={h.my_result ? "text-emerald-400" : ""}>
-                  {h.my_result ? `+${chips(h.my_result)}` : t("hist.played")}
+                <span className={mine ? (mine > 0 ? "text-emerald-400" : "text-red-400") : ""}>
+                  {mine ? signed(mine) : t("hist.played")}
                 </span>
               )}
             </div>
@@ -43,7 +45,7 @@ export function HistoryPanel({ roomId, refreshKey }: { roomId: string; refreshKe
               {h.board.map((c) => <Card key={c} card={c} size="sm" />)}
             </div>
             <div className="mt-1 text-xs">
-              {t("hist.winners")}{winners.map((w) => `${w.nickname ?? "#" + w.seat_no} +${chips(w.won)}`).join(", ")}
+              {t("hist.winners")}{winners.map((w) => `${w.nickname ?? "#" + w.seat_no} ${signed(net(w))}`).join(", ")}
               {h.uncontested ? t("hist.uncontested") : ""}
             </div>
           </Link>

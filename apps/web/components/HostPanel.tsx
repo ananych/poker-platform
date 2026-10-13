@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { api, errorText } from "@/lib/api";
-import { chips } from "@/lib/poker";
+import { chips, configError } from "@/lib/poker";
 import { useT } from "@/lib/i18n";
 import type { RoomConfig, RoomView } from "@/lib/types";
 import { btnGhost, btnPrimary, inputCls } from "./Modal";
@@ -120,9 +120,13 @@ export function HostPanel({ view }: { view: RoomView }) {
             </label>
           ))}
         </div>
-        <button className={btnGhost} disabled={busy} onClick={() => run(() => api.config(rid, {
-          sb: Number(cfg.sb), bb: Number(cfg.bb), min_buyin: Number(cfg.min_buyin),
-          max_buyin: Number(cfg.max_buyin) }))}>{t("host.save")}</button>
+        <button className={btnGhost} disabled={busy} onClick={() => {
+          const next = { sb: Number(cfg.sb), bb: Number(cfg.bb), min_buyin: Number(cfg.min_buyin),
+                         max_buyin: Number(cfg.max_buyin) };
+          const bad = configError(next);
+          if (bad) { setErr(t(bad)); return; }
+          void run(() => api.config(rid, next));
+        }}>{t("host.save")}</button>
       </section>
       <InviteBox roomId={rid} isHost />
     </div>

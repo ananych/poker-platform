@@ -13,6 +13,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.domain.poker import HandState, project_hand
 from app.persistence.models import (
     ChipLedger,
@@ -40,8 +41,8 @@ class RoomBundle:
     last_result: dict[str, Any] | None = None
     # member_id -> {"in": buy-ins + top-ups, "out": cash-outs}
     ledger: dict[uuid.UUID, dict[str, int]] | None = None
-    # last finished hand: seat -> (member_id, encrypted hole cards)
-    last_players: dict[int, tuple[uuid.UUID, bytes]] | None = None
+    # last finished hand: seat -> (member_id, encrypted hole cards, total contribution)
+    last_players: dict[int, tuple[uuid.UUID, bytes, int]] | None = None
 
 
 async def load_bundle(db: AsyncSession, room_id: uuid.UUID) -> RoomBundle | None:
@@ -105,7 +106,7 @@ async def load_bundle(db: AsyncSession, room_id: uuid.UUID) -> RoomBundle | None
                 **{e.event_type.split(".")[1]: e.public_payload for e in evs},
             }
             last_players = {
-                hp.seat_no: (hp.member_id, hp.hole_cards_ciphertext)
+                hp.seat_no: (hp.member_id, hp.hole_cards_ciphertext, hp.total_contribution)
                 for hp in (
                     await db.scalars(select(HandPlayer).where(HandPlayer.hand_id == last.id))
                 ).all()
@@ -155,6 +156,7 @@ def render(b: RoomBundle, viewer: RoomMember | None, connected: set[uuid.UUID]) 
         "status": room.status,
         "operational_status": room.operational_status,
         "auto_deal": room.auto_deal,
+        "action_timeout": get_settings().action_timeout_seconds,
         "next_hand_at": room.next_hand_at.isoformat() if room.next_hand_at else None,
         "room_version": room.version,
         "config": room.config_json,
@@ -236,9 +238,12 @@ def render(b: RoomBundle, viewer: RoomMember | None, connected: set[uuid.UUID]) 
     last = dict(b.last_result) if b.last_result is not None else None
     if last is not None:
         lp = b.last_players or {}
-        last["seat_members"] = {str(n): str(m) for n, (m, _) in lp.items()}
+        last["seat_members"] = {str(n): str(m) for n, (m, _, _) in lp.items()}
+        # net result of the hand per seat: collected (pot share + uncalled refund) - put in
+        payouts = (last.get("completed") or {}).get("payouts", {})
+        last["deltas"] = {str(n): payouts.get(str(n), 0) - c for n, (_, _, c) in lp.items()}
         mine = next(
-            ((n, ct) for n, (m, ct) in lp.items() if viewer is not None and m == viewer.id),
+            ((n, ct) for n, (m, ct, _) in lp.items() if viewer is not None and m == viewer.id),
             None,
         )
         # the viewer always sees their own cards in the result (public data otherwise)

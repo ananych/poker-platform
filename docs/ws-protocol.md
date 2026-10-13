@@ -65,3 +65,7 @@ New broadcast events (versioned, followed by `room.state`):
 - `room.auto_deal` `{enabled}`
 
 REST: `POST /api/v1/rooms/{id}/auto-deal {"enabled": bool}` (host only).
+
+`room.state` also carries `action_timeout` (seconds per decision) and `last_hand.deltas`
+(seat → net chips won/lost in that hand). Joining with a rotated/unknown invite token returns
+`INVALID_INVITE` (403).

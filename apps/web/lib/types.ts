@@ -4,7 +4,7 @@
 export type Chips = number;
 
 export type ErrorCode =
-  | "UNAUTHORIZED" | "ROOM_BANNED" | "ROOM_CLOSED" | "ROOM_FULL" | "INVALID_PASSWORD"
+  | "UNAUTHORIZED" | "INVALID_INVITE" | "ROOM_BANNED" | "ROOM_CLOSED" | "ROOM_FULL" | "INVALID_PASSWORD"
   | "INVALID_BUYIN" | "NOT_HOST" | "HAND_ALREADY_RUNNING" | "NOT_YOUR_TURN"
   | "INVALID_ACTION" | "STALE_VERSION" | "DEADLINE_EXPIRED" | "TOPUP_LIMIT_EXCEEDED"
   | "RATE_LIMITED" | "VALIDATION_ERROR" | "CSRF_FAILED" | "INTERNAL" | "NOT_FOUND"
@@ -82,6 +82,8 @@ export interface LastHand {
   /** only for a viewer who played the hand: their own hole cards (even if folded) */
   my_seat?: number;
   my_cards?: string[];
+  /** seat -> net chips won/lost in this hand */
+  deltas?: Record<string, number>;
   showdown?: {
     board: string[];
     shown: { seat_no: number; hole_cards: string[]; rank: string; best_five: string[] }[];
@@ -127,6 +129,8 @@ export interface RoomView {
   status: "OPEN" | "EMPTY_PENDING_CLOSE" | "CLOSED";
   operational_status: "ACTIVE" | "PAUSED_RECOVERY";
   auto_deal: boolean;
+  /** seconds per decision (server setting) */
+  action_timeout?: number;
   next_hand_at: string | null;
   standings: Standing[];
   room_version: number;
@@ -154,8 +158,8 @@ export interface LedgerSummary {
 export interface HandSummary {
   hand_id: string; ordinal: number; started_at: string; ended_at: string | null;
   blinds: [Chips, Chips]; board: string[]; pots: PotResult[]; uncontested: boolean | null;
-  players: { seat_no: number; member_id: string; nickname: string | null; won: Chips }[];
-  my_seat: number | null; my_result: Chips | null;
+  players: { seat_no: number; member_id: string; nickname: string | null; won: Chips; net?: Chips }[];
+  my_seat: number | null; my_result: Chips | null; my_net?: Chips | null;
 }
 
 export interface ReplayEvent { seq: number; type: string; payload: Record<string, unknown>; at: string }

@@ -8,6 +8,7 @@ export function useRemaining(deadline: string | null | undefined, clockOffset: n
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (!deadline) return;
+    setNow(Date.now()); // don't show a stale value for the first tick
     const t = setInterval(() => setNow(Date.now()), 250);
     return () => clearInterval(t);
   }, [deadline]);

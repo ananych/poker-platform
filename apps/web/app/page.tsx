@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { btnGhost, btnPrimary, inputCls } from "@/components/Modal";
 import { inviteStorageKey } from "@/components/HostPanel";
 import { api, errorText } from "@/lib/api";
+import { configError } from "@/lib/poker";
 import { LangToggle, useT, type MsgKey } from "@/lib/i18n";
 import type { Me } from "@/lib/types";
 
@@ -31,11 +32,13 @@ export default function Lobby() {
 
   async function create(e: React.FormEvent) {
     e.preventDefault();
+    const cfg = { sb: Number(f.sb), bb: Number(f.bb), min_buyin: Number(f.min_buyin),
+                  max_buyin: Number(f.max_buyin) };
+    const bad = configError(cfg);
+    if (bad) { setErr(t(bad)); return; }
     setBusy(true); setErr(null);
     try {
-      const r = await api.createRoom({
-        name: f.name || undefined, password: f.password, sb: Number(f.sb), bb: Number(f.bb),
-        min_buyin: Number(f.min_buyin), max_buyin: Number(f.max_buyin) });
+      const r = await api.createRoom({ name: f.name || undefined, password: f.password, ...cfg });
       try { localStorage.setItem(inviteStorageKey(r.room_id), r.invite_path); } catch {}
       router.push(`/rooms/${r.room_id}?created=1`);
     } catch (x) { setErr(errorText(x)); setBusy(false); }

@@ -13,7 +13,7 @@ import uuid
 from sqlalchemy import select
 
 from app.persistence.db import new_session
-from app.persistence.models import Guest, Hand, HandEvent, RoomMember
+from app.persistence.models import Guest, Hand, HandEvent, HandPlayer, RoomMember
 from app.services.errors import ServiceError
 from app.services.secrets import get_cipher
 from app.services.table import member_of, seat_members
@@ -47,7 +47,14 @@ async def list_hands(
         more = len(hands) > limit
         hands = hands[:limit]
         completed = {}
+        contrib: dict[tuple[uuid.UUID, int], int] = {}
         if hands:
+            for hp in (
+                await db.scalars(
+                    select(HandPlayer).where(HandPlayer.hand_id.in_([h.id for h in hands]))
+                )
+            ).all():
+                contrib[(hp.hand_id, hp.seat_no)] = hp.total_contribution
             evs = (
                 await db.scalars(
                     select(HandEvent).where(
@@ -81,11 +88,16 @@ async def list_hands(
                             "member_id": str(m),
                             "nickname": nick.get(m),
                             "won": payouts.get(str(s), 0),
+                            # net for the hand: collected - put in
+                            "net": payouts.get(str(s), 0) - contrib.get((h.id, s), 0),
                         }
                         for s, m in sorted(sm.items())
                     ],
                     "my_seat": my_seat,
                     "my_result": None if my_seat is None else payouts.get(str(my_seat), 0),
+                    "my_net": None
+                    if my_seat is None
+                    else payouts.get(str(my_seat), 0) - contrib.get((h.id, my_seat), 0),
                 }
             )
         return {"items": items, "next_cursor": hands[-1].ordinal if more and hands else None}

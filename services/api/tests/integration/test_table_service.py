@@ -320,7 +320,7 @@ async def test_wrong_invite_and_password_rate_limited():
     g = await make_guest("guesser")
     with pytest.raises(ServiceError) as e:
         await rooms.join_room(room_id, g, invite_token="nope", password=PASSWORD)
-    assert e.value.code == "UNAUTHORIZED"
+    assert e.value.code == "INVALID_INVITE"
     codes = []
     for _ in range(6):
         try:

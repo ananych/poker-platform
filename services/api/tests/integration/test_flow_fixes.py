@@ -159,3 +159,27 @@ async def test_result_shows_own_cards_and_net_is_zero_sum():
     # spectators never get anyone's folded cards
     spec = await make_guest("spec")
     assert "my_cards" not in (await view_for(room_id, spec))["last_hand"]
+
+
+async def test_hand_net_deltas_in_view_and_history():
+    room_id, guests, _ = await make_table(3)
+    await start(room_id, guests[0])
+    # a raise then folds: the raiser wins blinds; uncalled part refunded
+    g, v = await actor_guest(room_id, guests)
+    la = v["hand"]["legal_actions"]
+    await act(room_id, g, v, "RAISE", la["min_raise_to"])
+    await fold_out(room_id, guests)
+    view = await view_for(room_id, guests[0])
+    deltas = view["last_hand"]["deltas"]
+    assert sum(deltas.values()) == 0
+    assert sorted(deltas.values()) == [-10, -5, 15]  # SB and BB lose blinds, raiser +15
+    raiser_seat = (await view_for(room_id, g))["me"]["seat_no"]
+    assert deltas[str(raiser_seat)] == 15
+    # history carries the same per-player net
+    from app.services import history
+
+    page = await history.list_hands(room_id, g)
+    item = page["items"][0]
+    nets = {p["seat_no"]: p["net"] for p in item["players"]}
+    assert nets == {int(k): v for k, v in deltas.items()}
+    assert item["my_net"] == 15

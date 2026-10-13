@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, ApiError, wsUrl } from "./api";
+import { api, ApiError, errorCodeText, wsUrl } from "./api";
 import { getLang, translate } from "./i18n";
 import type {
   ActionResult, ChatMessage, CommandEnvelope, EventEnvelope, PokerAction, RoomView,
@@ -120,9 +120,11 @@ export function useRoom(roomId: string) {
             if (!r.accepted) sync();
             break;
           }
-          case "error":
-            setNotice((msg.payload as { message?: string }).message ?? translate(getLang(), "common.error"));
+          case "error": {
+            const e = msg.payload as { code?: string; message?: string };
+            setNotice(errorCodeText(e.code, e.message ?? translate(getLang(), "common.error")));
             break;
+          }
           case "room.closed":
             setNotice(translate(getLang(), "room.closed_notice"));
             break;

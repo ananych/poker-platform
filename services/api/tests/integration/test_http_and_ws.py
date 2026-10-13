@@ -59,7 +59,7 @@ async def test_rest_full_flow(make_client):
     r = await alice.post(
         f"/api/v1/rooms/{rid}/join", json={"password": "pw-1234", "invite_token": "x"}
     )
-    assert r.json()["error"]["code"] == "UNAUTHORIZED"
+    assert r.status_code == 403 and r.json()["error"]["code"] == "INVALID_INVITE"
     # non-member cannot see the room
     r = await alice.get(f"/api/v1/rooms/{rid}")
     assert r.status_code == 403 and r.json()["error"]["code"] == "NOT_MEMBER"

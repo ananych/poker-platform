@@ -42,10 +42,16 @@ function resolvePre(pre: PreAction, hand: HandView, la: LegalActions, myStreet: 
  * Sticky action row (SDD §11). Legal actions & min/max come only from the
  * server-side projection; the client never decides eligibility.
  */
-export function ActionBar({ view, act, hideCards }: {
+export function ActionBar({ view, act, hideCards, compact = false, side = false, tools }: {
   view: RoomView;
   act: (a: PokerAction, raiseTo?: number) => Promise<ActionResult>;
   hideCards: boolean;
+  /** short screens: smaller cards and controls */
+  compact?: boolean;
+  /** rendered in a side column (landscape phones) instead of stuck to the bottom */
+  side?: boolean;
+  /** my-seat tools (⋯ menu / I'm back), shown at the right of the top row */
+  tools?: React.ReactNode;
 }) {
   const { t } = useT();
   const hand = view.hand as HandView | null;
@@ -108,6 +114,7 @@ export function ActionBar({ view, act, hideCards }: {
   }, [hand, la, canSize, myStreet, t]);
 
   const myCards = hand?.your_cards ?? [];
+  const btnH = compact ? "h-11" : "h-12";
   const sizeVerb = la?.can_bet ? t("act.bet") : t("act.raise_to");
   const actorName = hand?.actor_seat
     ? view.seats.find((s) => s.seat_no === hand.actor_seat)?.nickname ?? `#${hand.actor_seat}` : null;
@@ -117,29 +124,38 @@ export function ActionBar({ view, act, hideCards }: {
   const preBtn = (p: PreAction, label: string) => {
     const on = sameKind(pre, p);
     return (
-      <button key={label} type="button" aria-pressed={on}
+      <button key={label} type="button" aria-pressed={on} aria-label={t("pre.aria", { a: label })}
               onClick={() => setPre(on ? null : p)}
-              className={`h-11 flex-1 rounded-lg px-1 text-xs font-medium ring-1 transition ${
+              className={`flex ${compact ? "h-10" : "h-11"} min-w-0 flex-1 items-center justify-center gap-1.5 rounded-lg px-1 text-xs font-medium ring-1 transition ${
                 on ? "bg-chip text-black ring-chip" : "bg-neutral-900 text-neutral-300 ring-neutral-700"}`}>
-        <span className="mr-1">{on ? "☑" : "☐"}</span>{label}
+        {/* drawn checkbox (glyphs render inconsistently as emoji on some phones) */}
+        <span aria-hidden className={`flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-[3px] border text-[10px] leading-none ${
+          on ? "border-black bg-black text-chip" : "border-neutral-500"}`}>
+          {on && <svg viewBox="0 0 12 12" className="h-2.5 w-2.5"><path d="M2 6.5 5 9l5-6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>}
+        </span>
+        <span className="truncate">{label}</span>
       </button>
     );
   };
 
   return (
-    <div className="sticky bottom-0 z-20 border-t border-white/10 bg-neutral-950/95 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2 backdrop-blur">
-      <div className="mx-auto flex max-w-3xl flex-col gap-2">
-        <div className="flex items-center gap-3">
+    <div data-testid="action-bar" className={side
+      ? "border-t border-white/10 bg-neutral-950 px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2"
+      : `sticky bottom-0 z-20 border-t border-white/10 bg-neutral-950/95 px-3 backdrop-blur ${compact
+        ? "pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-1.5" : "pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2"}`}>
+      <div className={`mx-auto flex max-w-3xl flex-col ${compact ? "gap-1.5" : "gap-2"}`}>
+        <div className={`flex items-center ${compact ? "gap-2" : "gap-3"}`}>
           {myCards.length > 0 && (
             <div className={`flex gap-1 transition ${hideCards ? "blur-md" : ""}`} aria-label={t("table.your_cards")}>
-              {myCards.map((c) => <Card key={c} card={c} size="lg" />)}
+              {myCards.map((c) => <Card key={c} card={c} size={compact ? "md" : "lg"} />)}
             </div>
           )}
           <div className="min-w-0 flex-1 text-xs text-neutral-400">
             {la ? <span className="your-turn text-sm font-semibold text-chip">{t("act.your_turn")}</span>
-              : actorName ? t("act.waiting_for", { name: actorName }) : null}
+              : actorName ? <span className="line-clamp-2 break-all">{t("act.waiting_for", { name: actorName })}</span> : null}
             {err && <div role="alert" className="text-red-400">{err}</div>}
           </div>
+          {tools}
         </div>
 
         {canPre && hand && (
@@ -168,7 +184,7 @@ export function ActionBar({ view, act, hideCards }: {
                 <div className="flex gap-1.5">
                   {presets.map((p) => (
                     <button key={p.label} type="button" onClick={() => setAmount(p.v)}
-                            className="h-11 flex-1 rounded-lg bg-neutral-800 text-xs font-medium active:bg-neutral-700">
+                            className={`${compact ? "h-10" : "h-11"} flex-1 rounded-lg bg-neutral-800 text-xs font-medium active:bg-neutral-700`}>
                       {p.label}
                     </button>
                   ))}
@@ -176,25 +192,25 @@ export function ActionBar({ view, act, hideCards }: {
                 <div className="flex items-center gap-2">
                   <input type="range" min={la.min_raise_to} max={la.max_raise_to} step={1}
                          value={amount} onChange={(e) => setAmount(Number(e.target.value))}
-                         className="h-11 flex-1 accent-amber-400" aria-label={t("act.amount")} />
+                         className={`${compact ? "h-10" : "h-11"} min-w-0 flex-1 accent-amber-400`} aria-label={t("act.amount")} />
                   <input type="number" inputMode="numeric" min={la.min_raise_to} max={la.max_raise_to}
                          value={amount}
                          onChange={(e) => setAmount(Number(e.target.value))}
                          onBlur={() => setAmount((v) => clamp(v || 0, la.min_raise_to, la.max_raise_to))}
-                         className="h-11 w-24 rounded-lg bg-neutral-900 px-2 text-right tabular-nums ring-1 ring-neutral-700"
+                         className={`${compact ? "h-10" : "h-11"} w-24 rounded-lg bg-neutral-900 px-2 text-right tabular-nums ring-1 ring-neutral-700`}
                          aria-label={t("common.amount")} />
                 </div>
               </div>
             )}
             <div className="grid grid-cols-3 gap-2">
               <button disabled={busy} onClick={() => run("FOLD")}
-                      className="h-12 rounded-xl bg-neutral-700 font-semibold disabled:opacity-50">{t("act.fold")}</button>
+                      className={`${btnH} rounded-xl bg-neutral-700 font-semibold disabled:opacity-50`}>{t("act.fold")}</button>
               {la.can_check ? (
                 <button disabled={busy} onClick={() => run("CHECK")}
-                        className="h-12 rounded-xl bg-sky-700 font-semibold disabled:opacity-50">{t("act.check")}</button>
+                        className={`${btnH} rounded-xl bg-sky-700 font-semibold disabled:opacity-50`}>{t("act.check")}</button>
               ) : (
                 <button disabled={busy || la.call_amount <= 0} onClick={() => run("CALL")}
-                        className="h-12 rounded-xl bg-sky-700 font-semibold disabled:opacity-50">
+                        className={`${btnH} rounded-xl bg-sky-700 font-semibold disabled:opacity-50`}>
                   {t("act.call", { n: chips(la.call_amount) })}
                 </button>
               )}
@@ -204,11 +220,11 @@ export function ActionBar({ view, act, hideCards }: {
                           if (v === la.max_raise_to) run("ALL_IN");
                           else run(la.can_bet ? "BET" : "RAISE", v);
                         }}
-                        className="h-12 rounded-xl bg-amber-500 font-semibold text-black disabled:opacity-50">
+                        className={`${btnH} rounded-xl bg-amber-500 font-semibold text-black disabled:opacity-50`}>
                   {amount >= la.max_raise_to ? t("act.all_in") : `${sizeVerb} ${chips(amount)}`}
                 </button>
               ) : (
-                <button disabled className="h-12 rounded-xl bg-neutral-800 text-sm text-neutral-500">
+                <button disabled className={`${btnH} rounded-xl bg-neutral-800 text-sm text-neutral-500`}>
                   {t("act.no_raise")}
                 </button>
               )}

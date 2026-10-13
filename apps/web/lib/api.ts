@@ -121,7 +121,7 @@ export function errorCodeText(code: string | undefined, fallback?: string): stri
 }
 
 const ERR_KEYS: Record<string, true> = Object.fromEntries(
-  ["UNAUTHORIZED", "INVALID_PASSWORD", "ROOM_BANNED", "ROOM_CLOSED", "INVALID_BUYIN", "NOT_HOST",
+  ["UNAUTHORIZED", "INVALID_PASSWORD", "INVALID_INVITE", "ROOM_BANNED", "ROOM_CLOSED", "INVALID_BUYIN", "NOT_HOST",
    "HAND_ALREADY_RUNNING", "NOT_YOUR_TURN", "INVALID_ACTION", "STALE_VERSION", "DEADLINE_EXPIRED",
    "TOPUP_LIMIT_EXCEEDED", "RATE_LIMITED", "NOT_MEMBER", "SEAT_TAKEN", "ALREADY_SEATED",
    "ROOM_PAUSED", "VALIDATION_ERROR", "NOT_FOUND"].map((c) => [`err.${c}`, true]),

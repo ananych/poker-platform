@@ -12,6 +12,7 @@ import { HostPanel, InviteBox, MembersPanel } from "@/components/HostPanel";
 import { LedgerPanel } from "@/components/LedgerPanel";
 import { btnGhost } from "@/components/Modal";
 import { PokerTable } from "@/components/PokerTable";
+import { SeatMenu } from "@/components/SeatMenu";
 import { SettingsMenu } from "@/components/Settings";
 import { StandingsList, StandingsPanel } from "@/components/StandingsPanel";
 import { api, errorText } from "@/lib/api";
@@ -43,6 +44,9 @@ export default function RoomPage() {
   const [standingsPop, setStandingsPop] = useState<number | null>(null);
   const remaining = useRemaining(view?.hand?.deadline_at, clockOffset);
   const desktop = useMedia("(min-width: 1024px)");
+  // landscape phones: actions go in a side column so the table keeps its height
+  const side = useMedia("(orientation: landscape) and (max-height: 520px)");
+  const short = useMedia("(max-height: 740px)");
 
   const viewRef = useRef<RoomView | null>(null);
   viewRef.current = view;
@@ -101,17 +105,6 @@ export default function RoomPage() {
         else play("chip");
         break;
       }
-      case "hand.completed": {
-        const mine = lastSeatRef.current;
-        const won = mine ? (p.payouts as Record<string, number> | undefined)?.[String(mine)] : undefined;
-        if (won && won > 0) {
-          play("win");
-          vibrate([80, 60, 160]);
-          setBigWin(won);
-          setTimeout(() => setBigWin(null), 3200);
-        }
-        break;
-      }
       case "chat.message": {
         const m = p as unknown as ChatMessage;
         showBubble(m.member_id, m.body);
@@ -164,22 +157,29 @@ export default function RoomPage() {
     document.title = unread > 0 ? `(${unread}) ${base}` : base;
   }, [turnKey, unread, view?.name, t]);
 
-  // ---- standings pop-up every N hands ---------------------------------------
+  // ---- a hand just finished: "you won" overlay + standings every N hands -----
   const lastOrdinal = view?.last_hand?.ordinal;
   const seenOrdinal = useRef<number | null>(null);
   useEffect(() => {
     if (!lastOrdinal) return;
-    if (seenOrdinal.current === null) { seenOrdinal.current = lastOrdinal; return; }
-    if (lastOrdinal !== seenOrdinal.current) {
-      seenOrdinal.current = lastOrdinal;
-      if (lastOrdinal % STANDINGS_EVERY === 0) {
-        setStandingsPop(lastOrdinal);
-        setTimeout(() => setStandingsPop((o) => (o === lastOrdinal ? null : o)), 7000);
-      }
+    if (seenOrdinal.current === null) { seenOrdinal.current = lastOrdinal; return; } // page load
+    if (lastOrdinal === seenOrdinal.current) return;
+    seenOrdinal.current = lastOrdinal;
+    const last = viewRef.current?.last_hand;
+    const mine = last?.my_seat ? last.deltas?.[String(last.my_seat)] : undefined;
+    if (mine && mine > 0) {
+      play("win");
+      vibrate([80, 60, 160]);
+      setBigWin(mine);
+      setTimeout(() => setBigWin(null), 3200);
+    }
+    if (lastOrdinal % STANDINGS_EVERY === 0) {
+      setStandingsPop(lastOrdinal);
+      setTimeout(() => setStandingsPop((o) => (o === lastOrdinal ? null : o)), 7000);
     }
   }, [lastOrdinal]);
 
-  if (loadError && !view) {
+  if (loadError && (!view || status === "forbidden")) {
     return (
       <main className="mx-auto flex min-h-dvh max-w-md flex-col justify-center gap-3 px-4">
         <h1 className="text-lg font-semibold">{t("room.cannot_enter")}</h1>
@@ -203,6 +203,58 @@ export default function RoomPage() {
     try { await fn(); } catch (e) { setToast(errorText(e)); }
   };
   const away = mySeat && (mySeat.participation_state === "SITTING_OUT" || mySeat.sit_out_next);
+  const busted = !!mySeat && mySeat.stack === 0 && !inHand;
+
+  const showBar = !!(view.hand?.your_seat || view.hand?.legal_actions);
+  const sitOut = () => run(() => api.sitOut(roomId, true));
+  const backIn = () => run(() => api.sitOut(roomId, false));
+  const leaveSeat = () => {
+    if (window.confirm(inHand ? t("room.leave_confirm_hand") : t("room.leave_confirm")))
+      void run(() => api.leave(roomId));
+  };
+  const topupNotes = (me?.topups ?? []).filter((tp) => tp.status !== "APPLIED").map((tp) =>
+    tp.status === "REQUESTED" ? t("room.topup_requested", { n: chips(tp.amount) })
+      : t("room.topup_approved", { n: chips(tp.amount) }));
+  const hostStart = isHost && !view.hand && view.operational_status === "ACTIVE" && view.status !== "CLOSED";
+  const hostResume = isHost && view.operational_status === "PAUSED_RECOVERY";
+  const seatButtons = !!mySeat && !showBar;
+  const spectating = !mySeat && !!me && view.status !== "CLOSED";
+
+  // host shortcuts + my-seat buttons (the seat buttons move into the action bar during a hand)
+  const controls = (hostStart || hostResume || seatButtons || spectating) ? (
+    <div data-testid="controls" className="flex shrink-0 flex-wrap items-center justify-center gap-2 px-3 py-2">
+      {hostStart && (
+        <button className="h-11 rounded-lg bg-emerald-600 px-4 text-sm font-semibold"
+                onClick={() => run(() => api.startHand(roomId, view.room_version))}>
+          {view.next_hand_at ? t("room.deal_now") : t("room.start_hand")}
+        </button>
+      )}
+      {hostResume && (
+        <button className="h-11 rounded-lg bg-amber-500 px-4 text-sm font-semibold text-black"
+                onClick={() => run(() => api.resume(roomId))}>{t("room.resume")}</button>
+      )}
+      {seatButtons && (<>
+        <button className={away ? "h-11 rounded-lg bg-emerald-600 px-4 text-sm font-semibold" : btnGhost}
+                onClick={away ? backIn : sitOut}>
+          {away ? t("room.back_in") : t("room.sit_out")}
+        </button>
+        <button className={busted ? "h-11 rounded-lg bg-amber-500 px-4 text-sm font-semibold text-black" : btnGhost}
+                onClick={() => setTopup(true)}>{t("room.topup")}</button>
+        <button className={btnGhost} onClick={leaveSeat}>{t("room.leave")}</button>
+        {topupNotes.map((n) => <span key={n} className="text-xs text-neutral-400">{n}</span>)}
+      </>)}
+      {busted && <span className="w-full text-center text-xs text-amber-300">{t("table.busted")}</span>}
+      {spectating && <span className="text-xs text-neutral-400">{t("room.spectating")}</span>}
+    </div>
+  ) : null;
+
+  const actionBar = showBar ? (
+    <ActionBar view={view} act={room.act} hideCards={hidden} compact={short || side} side={side}
+               tools={mySeat ? (
+                 <SeatMenu away={!!away} onSitOut={sitOut} onBack={backIn} onTopup={() => setTopup(true)}
+                           onLeave={leaveSeat} notes={topupNotes} />
+               ) : null} />
+  ) : null;
 
   const tabs: { id: Tab; label: string; badge?: number }[] = [
     { id: "chat", label: t("tab.chat"), badge: unread },
@@ -215,10 +267,10 @@ export default function RoomPage() {
 
   const panel = (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex shrink-0 overflow-x-auto border-b border-white/10" role="tablist">
+      <div className="flex shrink-0 overflow-x-auto border-b border-white/10 [scrollbar-width:none]" role="tablist">
         {tabs.map((tb) => (
           <button key={tb.id} role="tab" aria-selected={tab === tb.id} onClick={() => setTab(tb.id)}
-                  className={`relative h-11 min-w-[3.25rem] flex-1 whitespace-nowrap px-1 text-sm ${tab === tb.id ? "border-b-2 border-chip text-chip" : "text-neutral-400"}`}>
+                  className={`relative h-11 flex-auto shrink-0 whitespace-nowrap px-2.5 text-sm ${tab === tb.id ? "border-b-2 border-chip text-chip" : "text-neutral-400"}`}>
             {tb.label}
             {!!tb.badge && tab !== tb.id && (
               <span className="absolute right-0.5 top-1 rounded-full bg-red-600 px-1 text-[10px] text-white">{tb.badge}</span>)}
@@ -238,7 +290,9 @@ export default function RoomPage() {
         {tab === "history" && <HistoryPanel roomId={roomId} refreshKey={view.last_hand?.hand_id} />}
         {tab === "ledger" && <LedgerPanel roomId={roomId} members={view.members}
                                           refreshKey={view.room_version} />}
-        {tab === "host" && isHost && <HostPanel key={view.room_version} view={view} />}
+        {/* re-init the form only when the saved config changes, not on every table update */}
+        {tab === "host" && isHost && (
+          <HostPanel key={JSON.stringify(view.pending_config ?? view.config)} view={view} />)}
       </div>
     </div>
   );
@@ -281,8 +335,8 @@ export default function RoomPage() {
       )}
 
       <div className="flex min-h-0 flex-1">
-        <main className="flex min-w-0 flex-1 flex-col">
-          <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden px-1 py-2 [container-type:size]">
+        <main className={`flex min-w-0 flex-1 ${side ? "flex-row" : "flex-col"}`}>
+          <div data-testid="table-area" className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
             <PokerTable view={view} remaining={remaining} clockOffset={clockOffset} bubbles={bubbles}
                         onSit={(n) => setSitAt(n)} />
             {bigWin !== null && (
@@ -309,46 +363,14 @@ export default function RoomPage() {
             )}
           </div>
 
-          {/* my seat / host shortcuts; never covers the action buttons */}
-          <div className="flex shrink-0 flex-wrap items-center justify-center gap-2 px-3 pb-2">
-            {isHost && !view.hand && view.operational_status === "ACTIVE" && view.status !== "CLOSED" && (
-              <button className="h-11 rounded-lg bg-emerald-600 px-4 text-sm font-semibold"
-                      onClick={() => run(() => api.startHand(roomId, view.room_version))}>
-                {view.next_hand_at ? t("room.deal_now") : t("room.start_hand")}
-              </button>
-            )}
-            {isHost && view.operational_status === "PAUSED_RECOVERY" && (
-              <button className="h-11 rounded-lg bg-amber-500 px-4 text-sm font-semibold text-black"
-                      onClick={() => run(() => api.resume(roomId))}>{t("room.resume")}</button>
-            )}
-            {mySeat && (<>
-              <button className={away ? "h-11 rounded-lg bg-emerald-600 px-4 text-sm font-semibold" : btnGhost}
-                      onClick={() => run(() => api.sitOut(roomId, !away))}>
-                {away ? t("room.back_in") : t("room.sit_out")}
-              </button>
-              <button className={btnGhost} onClick={() => setTopup(true)}>{t("room.topup")}</button>
-              <button className={btnGhost} onClick={() => {
-                if (window.confirm(inHand ? t("room.leave_confirm_hand") : t("room.leave_confirm")))
-                  run(() => api.leave(roomId));
-              }}>{t("room.leave")}</button>
-              {me?.topups.filter((tp) => tp.status !== "APPLIED").map((tp) => (
-                <span key={tp.request_id} className="text-xs text-neutral-400">
-                  {tp.status === "REQUESTED" ? t("room.topup_requested", { n: chips(tp.amount) })
-                    : t("room.topup_approved", { n: chips(tp.amount) })}
-                </span>
-              ))}
-            </>)}
-            {!mySeat && me && view.status !== "CLOSED" && (
-              <span className="text-xs text-neutral-400">{t("room.spectating")}</span>
-            )}
-          </div>
-
-          {(view.hand?.your_seat || view.hand?.legal_actions) && (
-            <ActionBar view={view} act={room.act} hideCards={hidden} />
-          )}
+          {side ? ((controls || actionBar) && (
+            <div className="flex w-[min(22rem,46vw)] shrink-0 flex-col justify-end overflow-y-auto border-l border-white/10">
+              {controls}{actionBar}
+            </div>
+          )) : (<>{controls}{actionBar}</>)}
         </main>
 
-        {desktop && <aside className="w-80 shrink-0 border-l border-white/10">{panel}</aside>}
+        {desktop && <aside className="w-80 shrink-0 border-l border-white/10 xl:w-96">{panel}</aside>}
       </div>
 
       {/* mobile bottom sheet */}
