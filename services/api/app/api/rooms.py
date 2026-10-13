@@ -48,6 +48,10 @@ class SitOutIn(BaseModel):
     sit_out: StrictBool
 
 
+class AutoDealIn(BaseModel):
+    enabled: StrictBool
+
+
 class TopupIn(BaseModel):
     amount: StrictInt
 
@@ -167,6 +171,13 @@ async def start_hand(
 @router.post("/{room_id}/resume")
 async def resume(room_id: uuid.UUID, ctx: SessionContext = Depends(require_session)):
     return await table.resume(room_id, gid(ctx))
+
+
+@router.post("/{room_id}/auto-deal")
+async def auto_deal(
+    room_id: uuid.UUID, body: AutoDealIn, ctx: SessionContext = Depends(require_session)
+):
+    return await table.set_auto_deal(room_id, gid(ctx), body.enabled)
 
 
 @router.patch("/{room_id}/config")

@@ -10,19 +10,22 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.poker import HandState, project_hand
 from app.persistence.models import (
+    ChipLedger,
     Guest,
     Hand,
     HandEvent,
+    HandPlayer,
     Room,
     RoomMember,
     TableSeat,
     TopupRequest,
 )
+from app.services.secrets import get_cipher
 from app.services.table import live_hand, load_state, seat_members
 
 
@@ -35,6 +38,10 @@ class RoomBundle:
     state: HandState | None
     topups: list[TopupRequest]
     last_result: dict[str, Any] | None = None
+    # member_id -> {"in": buy-ins + top-ups, "out": cash-outs}
+    ledger: dict[uuid.UUID, dict[str, int]] | None = None
+    # last finished hand: seat -> (member_id, encrypted hole cards)
+    last_players: dict[int, tuple[uuid.UUID, bytes]] | None = None
 
 
 async def load_bundle(db: AsyncSession, room_id: uuid.UUID) -> RoomBundle | None:
@@ -72,6 +79,7 @@ async def load_bundle(db: AsyncSession, room_id: uuid.UUID) -> RoomBundle | None
         ).all()
     )
     last_result = None
+    last_players = None
     if hand is None:
         last = await db.scalar(
             select(Hand)
@@ -93,9 +101,29 @@ async def load_bundle(db: AsyncSession, room_id: uuid.UUID) -> RoomBundle | None
             last_result = {
                 "hand_id": str(last.id),
                 "ordinal": last.ordinal,
+                "ended_at": last.ended_at.isoformat() if last.ended_at else None,
                 **{e.event_type.split(".")[1]: e.public_payload for e in evs},
             }
-    return RoomBundle(room, members, seats, hand, state, topups, last_result)
+            last_players = {
+                hp.seat_no: (hp.member_id, hp.hole_cards_ciphertext)
+                for hp in (
+                    await db.scalars(select(HandPlayer).where(HandPlayer.hand_id == last.id))
+                ).all()
+            }
+    ledger: dict[uuid.UUID, dict[str, int]] = {}
+    for member_id, typ, total in (
+        await db.execute(
+            select(ChipLedger.member_id, ChipLedger.type, func.sum(ChipLedger.amount))
+            .where(ChipLedger.room_id == room_id)
+            .group_by(ChipLedger.member_id, ChipLedger.type)
+        )
+    ).all():
+        row = ledger.setdefault(member_id, {"in": 0, "out": 0})
+        if typ in ("BUY_IN", "TOP_UP"):
+            row["in"] += int(total)
+        elif typ == "CASH_OUT":
+            row["out"] += int(total)
+    return RoomBundle(room, members, seats, hand, state, topups, last_result, ledger, last_players)
 
 
 def render(b: RoomBundle, viewer: RoomMember | None, connected: set[uuid.UUID]) -> dict[str, Any]:
@@ -103,12 +131,31 @@ def render(b: RoomBundle, viewer: RoomMember | None, connected: set[uuid.UUID]) 
     nick = {m.id: n for m, n in b.members}
     is_host = viewer is not None and room.host_member_id == viewer.id
     my_seat = next((s for s in b.seats if viewer is not None and s.member_id == viewer.id), None)
+    ledger = b.ledger or {}
+    # chips committed to the live pot still count as the player's (net = at hand start)
+    committed: dict[int, int] = {}
+    if b.hand is not None and b.state is not None:
+        committed = {n: p.total_contribution for n, p in b.state.players.items()}
+    seated = {s.member_id: s for s in b.seats}
+
+    def net_of(member_id: uuid.UUID) -> dict[str, int]:
+        row = ledger.get(member_id, {"in": 0, "out": 0})
+        seat = seated.get(member_id)
+        stack = (seat.stack + committed.get(seat.seat_no, 0)) if seat else 0
+        return {
+            "invested": row["in"],
+            "cashed_out": row["out"],
+            "stack": stack,
+            "net": stack + row["out"] - row["in"],
+        }
 
     view: dict[str, Any] = {
         "room_id": str(room.id),
         "name": room.name,
         "status": room.status,
         "operational_status": room.operational_status,
+        "auto_deal": room.auto_deal,
+        "next_hand_at": room.next_hand_at.isoformat() if room.next_hand_at else None,
         "room_version": room.version,
         "config": room.config_json,
         "pending_config": room.pending_config_json,
@@ -134,9 +181,18 @@ def render(b: RoomBundle, viewer: RoomMember | None, connected: set[uuid.UUID]) 
                 "pending_leave": s.pending_leave,
                 "sit_out_next": s.sit_out_next,
                 "connected": s.member_id in connected,
+                "net": net_of(s.member_id)["net"],
             }
             for s in b.seats
         ],
+        "standings": sorted(
+            (
+                {"member_id": str(m.id), "nickname": n, "seated": m.id in seated, **net_of(m.id)}
+                for m, n in b.members
+                if m.id in ledger
+            ),
+            key=lambda r: -r["net"],
+        ),
         "me": None,
         "hand": None,
     }
@@ -177,5 +233,19 @@ def render(b: RoomBundle, viewer: RoomMember | None, connected: set[uuid.UUID]) 
             }
         )
         view["hand"] = hv
-    view["last_hand"] = b.last_result  # public showdown/settlement only
+    last = dict(b.last_result) if b.last_result is not None else None
+    if last is not None:
+        lp = b.last_players or {}
+        last["seat_members"] = {str(n): str(m) for n, (m, _) in lp.items()}
+        mine = next(
+            ((n, ct) for n, (m, ct) in lp.items() if viewer is not None and m == viewer.id),
+            None,
+        )
+        # the viewer always sees their own cards in the result (public data otherwise)
+        if mine is not None:
+            n, ct = mine
+            hand_id = uuid.UUID(last["hand_id"])
+            last["my_seat"] = n
+            last["my_cards"] = get_cipher().decrypt_json(ct, aad=hand_id.bytes + bytes([n]))
+    view["last_hand"] = last  # public showdown/settlement + viewer's own cards
     return view

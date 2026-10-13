@@ -13,6 +13,7 @@ export default defineConfig({
   reporter: [["list"]],
   use: {
     baseURL: process.env.E2E_BASE_URL ?? "http://localhost:3000",
+    locale: "zh-TW", // UI language follows the browser; the spec uses Chinese labels
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
     launchOptions: process.env.PW_CHROMIUM_PATH ? { executablePath: process.env.PW_CHROMIUM_PATH } : {},

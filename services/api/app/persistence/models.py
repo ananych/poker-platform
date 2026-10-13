@@ -83,6 +83,9 @@ class Room(Base):
     version: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
     button_seat: Mapped[int | None] = mapped_column(Integer)
     bb_seat: Mapped[int | None] = mapped_column(Integer)  # BB advances 1 seat per hand (A-01)
+    # auto-deal: next hand starts at next_hand_at unless the host paused dealing
+    auto_deal: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    next_hand_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     empty_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = _now()
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -147,6 +150,8 @@ class TableSeat(Base):
     )
     pending_leave: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     sit_out_next: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    # set while SITTING_OUT; the sweeper stands the player up after a grace period
+    sitting_out_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (
         CheckConstraint("seat_no BETWEEN 1 AND 9", name="seat_range"),

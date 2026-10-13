@@ -44,3 +44,24 @@ Envelope: `{"kind":"event","type":...,"event_id","room_id","room_version","serve
   so reconnects never invalidate another player's pending action.
 - Countdown: use `hand.deadline_at` with `server_time` to estimate skew; the server alone
   decides timeouts.
+
+## Additions (2026-10 playtest fixes)
+
+`room.state` payload gains:
+
+| Field | Meaning |
+|---|---|
+| `auto_deal` | host setting; when true the next hand starts automatically |
+| `next_hand_at` | ISO time the next hand will be auto-dealt (null while a hand runs, or when paused / before the first hand) |
+| `seats[].net` | stack + chips committed to the live pot + cash-outs − buy-ins − top-ups |
+| `standings[]` | `{member_id, nickname, seated, invested, cashed_out, stack, net}`, sorted by `net` desc; includes players who left |
+| `last_hand.seat_members` | seat → member for the finished hand (names survive players leaving) |
+| `last_hand.my_seat`, `last_hand.my_cards` | only for a viewer who played that hand: their own hole cards (also when folded) |
+
+New broadcast events (versioned, followed by `room.state`):
+
+- `player.sit_out` now may carry `reason: "TIMEOUT"` (the actor timed out: auto-folded, sat out from the next hand)
+- `player.stood_up` `{seat_no, reason: "SIT_OUT_TIMEOUT"}` (sat out longer than 10 min → cashed out)
+- `room.auto_deal` `{enabled}`
+
+REST: `POST /api/v1/rooms/{id}/auto-deal {"enabled": bool}` (host only).

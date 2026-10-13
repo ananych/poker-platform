@@ -9,3 +9,47 @@
 
 html, body { background: #0b0d10; color: #e8eaed; }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+/* --- table feedback animations --- */
+@keyframes winner-glow {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(245, 197, 66, .9), 0 0 18px 4px rgba(245, 197, 66, .55); }
+  50% { box-shadow: 0 0 0 2px rgba(245, 197, 66, 1), 0 0 30px 10px rgba(245, 197, 66, .8); }
+}
+.winner-glow { animation: winner-glow 1.2s ease-in-out infinite; }
+
+/* Tailwind v4 positions with the `translate` property, so keyframes use `transform` only */
+@keyframes pop-in {
+  0% { transform: translateY(6px) scale(.6); opacity: 0; }
+  60% { transform: scale(1.08); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+.win-pop { animation: pop-in .45s ease-out both; }
+
+@keyframes big-win {
+  0% { transform: scale(.4); opacity: 0; }
+  15% { transform: scale(1.1); opacity: 1; }
+  25% { transform: scale(1); }
+  85% { opacity: 1; }
+  100% { transform: scale(1.05) translateY(-10px); opacity: 0; }
+}
+.big-win { animation: big-win 3.2s ease-out both; }
+
+@keyframes bubble {
+  0% { transform: translateY(6px) scale(.8); opacity: 0; }
+  8% { transform: none; opacity: 1; }
+  88% { opacity: 1; }
+  100% { opacity: 0; }
+}
+.seat-bubble { animation: bubble 5s ease-out both; }
+.seat-bubble::after {
+  content: ""; position: absolute; left: 50%; bottom: -5px; transform: translateX(-50%);
+  border: 5px solid transparent; border-top-color: #fff; border-bottom: 0;
+}
+.seat-bubble-left::after { left: 1.5rem; }
+.seat-bubble-right::after { left: auto; right: 1.5rem; transform: none; }
+
+@keyframes your-turn { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
+.your-turn { animation: your-turn 1s ease-in-out infinite; }
+
+@keyframes toast-in { from { transform: translateY(-8px); opacity: 0; } to { transform: none; opacity: 1; } }
+.toast-in { animation: toast-in .2s ease-out both; }

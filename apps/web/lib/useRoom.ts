@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, wsUrl } from "./api";
+import { getLang, translate } from "./i18n";
 import type {
   ActionResult, ChatMessage, CommandEnvelope, EventEnvelope, PokerAction, RoomView,
 } from "./types";
@@ -39,6 +40,12 @@ export function useRoom(roomId: string) {
   const pending = useRef(new Map<string, Pending>());
   const retry = useRef(0);
   const stopped = useRef(false);
+  const listeners = useRef(new Set<(e: EventEnvelope) => void>());
+  /** Subscribe to every server event (sounds, bubbles, notices). Returns unsubscribe. */
+  const onEvent = useCallback((fn: (e: EventEnvelope) => void) => {
+    listeners.current.add(fn);
+    return () => { listeners.current.delete(fn); };
+  }, []);
 
   const applyView = useCallback((v: RoomView) => {
     if (v.room_version >= versionRef.current) {
@@ -90,6 +97,9 @@ export function useRoom(roomId: string) {
         if (msg.server_time) {
           setClockOffset(new Date(msg.server_time).getTime() - Date.now());
         }
+        for (const fn of listeners.current) {
+          try { fn(msg); } catch { /* listener bugs must not break sync */ }
+        }
         switch (msg.type) {
           case "room.state":
             applyView(msg.payload as RoomView);
@@ -111,10 +121,10 @@ export function useRoom(roomId: string) {
             break;
           }
           case "error":
-            setNotice((msg.payload as { message?: string }).message ?? "錯誤");
+            setNotice((msg.payload as { message?: string }).message ?? translate(getLang(), "common.error"));
             break;
           case "room.closed":
-            setNotice("房間已關閉");
+            setNotice(translate(getLang(), "room.closed_notice"));
             break;
           default:
             // versioned delta whose room.state will follow; resync if we fell behind
@@ -126,7 +136,7 @@ export function useRoom(roomId: string) {
         for (const [id, p] of pending.current) {
           clearTimeout(p.timer);
           p.resolve({ accepted: false, action_id: id, error: {
-            code: "INTERNAL", message: "連線中斷", room_version: null } });
+            code: "INTERNAL", message: translate(getLang(), "common.disconnected"), room_version: null } });
         }
         pending.current.clear();
         if (stopped.current) return;
@@ -159,7 +169,7 @@ export function useRoom(roomId: string) {
       const timer = setTimeout(() => {
         pending.current.delete(action_id);
         resolve({ accepted: false, action_id, error: {
-          code: "INTERNAL", message: "伺服器沒有回應", room_version: null } });
+          code: "INTERNAL", message: translate(getLang(), "common.no_response"), room_version: null } });
         sync();
       }, 8000);
       pending.current.set(action_id, { resolve, timer });
@@ -172,7 +182,7 @@ export function useRoom(roomId: string) {
         clearTimeout(timer);
         pending.current.delete(action_id);
         resolve({ accepted: false, action_id, error: {
-          code: "INTERNAL", message: "尚未連線", room_version: null } });
+          code: "INTERNAL", message: translate(getLang(), "common.not_connected"), room_version: null } });
       }
     });
   }, [view, send, sync]);
@@ -180,5 +190,6 @@ export function useRoom(roomId: string) {
   const sendChat = useCallback((body: string) =>
     send({ kind: "command", type: "chat.send", payload: { body } }), [send]);
 
-  return { view, chat, status, loadError, notice, setNotice, clockOffset, act, sendChat, refresh };
+  return { view, chat, status, loadError, notice, setNotice, clockOffset, act, sendChat, refresh,
+           onEvent };
 }

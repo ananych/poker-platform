@@ -287,13 +287,17 @@ def apply_action(
     return st, events
 
 
-def timeout_action(state: HandState) -> tuple[HandState, list[Event]]:
-    """Server-clock timeout: Check if legal, else Fold (SDD §2, §5.2)."""
+def timeout_action(
+    state: HandState, *, check_if_possible: bool = False
+) -> tuple[HandState, list[Event]]:
+    """Server-clock timeout. Product rule (2026-10): a timeout always folds and the
+    player is then sat out. `check_if_possible=True` restores SDD §2 Check-or-Fold."""
     if state.actor_seat is None:
         raise EngineError("INVALID_ACTION", "no actor")
     seat = state.actor_seat
     la = legal_actions(state, seat)
-    st, events = apply_action(state, seat, ActionType.CHECK if la.can_check else ActionType.FOLD)
+    choice = ActionType.CHECK if (check_if_possible and la.can_check) else ActionType.FOLD
+    st, events = apply_action(state, seat, choice)
     events[0]["public"]["timeout"] = True
     return st, events
 

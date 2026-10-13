@@ -238,12 +238,12 @@ async def set_sit_out(room_id: uuid.UUID, guest_id: uuid.UUID, sit_out: bool) ->
             if in_hand:
                 seat.sit_out_next = True  # effective after the current hand
             else:
-                seat.participation_state = "SITTING_OUT"
-                seat.sit_out_next = False
+                mark_sitting_out(seat)
         else:
             seat.sit_out_next = False
             if seat.participation_state == "SITTING_OUT":
                 seat.participation_state = "WAITING_FOR_BLIND"  # blind re-entry policy
+                seat.sitting_out_since = None
         v = tx.bump()
         tx.emit("player.sit_out", {"seat_no": seat.seat_no, "sit_out": sit_out})
         return {
@@ -252,6 +252,13 @@ async def set_sit_out(room_id: uuid.UUID, guest_id: uuid.UUID, sit_out: bool) ->
             "sit_out_next": seat.sit_out_next,
             "room_version": v,
         }
+
+
+def mark_sitting_out(seat: TableSeat) -> None:
+    seat.participation_state = "SITTING_OUT"
+    seat.sit_out_next = False
+    if seat.sitting_out_since is None:
+        seat.sitting_out_since = clock.now()
 
 
 async def remove_from_table(tx: RoomTx, member_id: uuid.UUID) -> str:
@@ -367,7 +374,7 @@ async def _persist_hand(
         await _finalize(tx, hand)
     elif hand.deadline_at is not None:
         room_id, hand_id, deadline = tx.room.id, hand.id, hand.deadline_at
-        tx.after_commit.append(lambda: timers.schedule(room_id, hand_id, version, deadline))
+        tx.after_commit.append(lambda: timers.schedule(room_id, hand_id, deadline))
     return version
 
 
@@ -384,10 +391,13 @@ async def _finalize(tx: RoomTx, hand: Hand) -> None:
         if seat.pending_leave:
             await _cash_out(tx, seat)
         elif seat.sit_out_next:
-            seat.participation_state = "SITTING_OUT"
-            seat.sit_out_next = False
+            mark_sitting_out(seat)
     room_id = tx.room.id
     tx.after_commit.append(lambda: timers.cancel(room_id))
+    if tx.room.auto_deal and tx.room.status != "CLOSED":
+        at = clock.now() + timedelta(seconds=get_settings().auto_deal_delay_seconds)
+        tx.room.next_hand_at = at
+        tx.after_commit.append(lambda: timers.schedule_deal(room_id, at))
 
 
 async def start_next_hand(
@@ -409,105 +419,154 @@ async def start_next_hand(
             if prior is not None:
                 return {"hand_id": str(prior.id), "room_version": room.version, "replayed": True}
         require_version(room, expected_version)
-        if lifecycle.draining:
-            raise ServiceError(
-                "ROOM_PAUSED", "Server is restarting; try again shortly.", room.version
-            )
-        if room.operational_status != "ACTIVE":
-            raise ServiceError("ROOM_PAUSED", "Room is paused; host must resume.", room.version)
-        if await live_hand(tx.db, room_id) is not None:
-            raise ServiceError("HAND_ALREADY_RUNNING", "A hand is already running.", room.version)
+        return await _start_hand(tx, idempotency_key)
 
-        # between-hands boundary: pending config, then approved top-ups
-        if room.pending_config_json:
-            room.config_json = {**room.config_json, **room.pending_config_json}
-            room.pending_config_json = None
-        await apply_approved_topups(tx)
-        await tx.db.flush()
 
-        seats = (await tx.db.scalars(select(TableSeat).where(TableSeat.room_id == room_id))).all()
-        eligible = [
-            s
-            for s in seats
-            if s.stack > 0
-            and not s.pending_leave
-            and not s.sit_out_next
-            and s.participation_state in ("ACTIVE", "WAITING_FOR_BLIND")
-        ]
-        active = [s.seat_no for s in eligible if s.participation_state == "ACTIVE"]
-        waiting = [s.seat_no for s in eligible if s.participation_state == "WAITING_FOR_BLIND"]
-        try:
-            pos = next_hand_positions(active, waiting, room.bb_seat)
-        except EngineError:
-            raise ServiceError(
-                "INVALID_ACTION", "At least two eligible seated players are required.", room.version
-            ) from None
-        by_no = {s.seat_no: s for s in seats}
-        cfg = _config(room)
-        hand_cfg = HandConfig(small_blind=cfg["sb"], big_blind=cfg["bb"])
-        state, events = start_hand(
-            hand_cfg, {n: by_no[n].stack for n in pos.participants}, pos.button
+async def auto_start_hand(room_id: uuid.UUID) -> bool:
+    """Auto-deal wake-up (timer or sweeper). Re-validated under the room lock; a
+    table without two eligible players just waits (next_hand_at stays armed)."""
+    try:
+        async with room_tx(room_id) as tx:
+            room = tx.room
+            if (
+                not room.auto_deal
+                or room.next_hand_at is None
+                or clock.now() < room.next_hand_at
+                or room.status == "CLOSED"
+                or room.operational_status != "ACTIVE"
+                or lifecycle.draining
+                or await live_hand(tx.db, room_id) is not None
+            ):
+                return False
+            seats = (
+                await tx.db.scalars(select(TableSeat).where(TableSeat.room_id == room_id))
+            ).all()
+            if len([s for s in seats if _eligible(s)]) < 2:
+                return False
+            await _start_hand(tx, None)
+            return True
+    except ServiceError:
+        return False
+
+
+def _eligible(s: TableSeat) -> bool:
+    return (
+        s.stack > 0
+        and not s.pending_leave
+        and not s.sit_out_next
+        and s.participation_state in ("ACTIVE", "WAITING_FOR_BLIND")
+    )
+
+
+async def set_auto_deal(room_id: uuid.UUID, guest_id: uuid.UUID, enabled: bool) -> dict:
+    async with room_tx(room_id) as tx:
+        member = await member_of(tx.db, room_id, guest_id)
+        require_host(tx.room, member)
+        room = tx.room
+        room.auto_deal = enabled
+        at = None
+        if enabled:
+            if await live_hand(tx.db, room_id) is None:
+                at = clock.now() + timedelta(seconds=get_settings().auto_deal_delay_seconds)
+        room.next_hand_at = at
+        if at is not None:
+            tx.after_commit.append(lambda: timers.schedule_deal(room_id, at))
+        v = tx.bump()
+        tx.emit("room.auto_deal", {"enabled": enabled})
+        return {"auto_deal": enabled, "room_version": v}
+
+
+async def _start_hand(tx: RoomTx, idempotency_key: str | None) -> dict:
+    room, room_id = tx.room, tx.room.id
+    if lifecycle.draining:
+        raise ServiceError("ROOM_PAUSED", "Server is restarting; try again shortly.", room.version)
+    if room.operational_status != "ACTIVE":
+        raise ServiceError("ROOM_PAUSED", "Room is paused; host must resume.", room.version)
+    if await live_hand(tx.db, room_id) is not None:
+        raise ServiceError("HAND_ALREADY_RUNNING", "A hand is already running.", room.version)
+
+    # between-hands boundary: pending config, then approved top-ups
+    if room.pending_config_json:
+        room.config_json = {**room.config_json, **room.pending_config_json}
+        room.pending_config_json = None
+    await apply_approved_topups(tx)
+    await tx.db.flush()
+
+    seats = (await tx.db.scalars(select(TableSeat).where(TableSeat.room_id == room_id))).all()
+    eligible = [s for s in seats if _eligible(s)]
+    active = [s.seat_no for s in eligible if s.participation_state == "ACTIVE"]
+    waiting = [s.seat_no for s in eligible if s.participation_state == "WAITING_FOR_BLIND"]
+    try:
+        pos = next_hand_positions(active, waiting, room.bb_seat)
+    except EngineError:
+        raise ServiceError(
+            "INVALID_ACTION", "At least two eligible seated players are required.", room.version
+        ) from None
+    by_no = {s.seat_no: s for s in seats}
+    cfg = _config(room)
+    hand_cfg = HandConfig(small_blind=cfg["sb"], big_blind=cfg["bb"])
+    state, events = start_hand(hand_cfg, {n: by_no[n].stack for n in pos.participants}, pos.button)
+    assert state.bb_seat == pos.big_blind
+
+    ordinal = (
+        await tx.db.scalar(
+            select(func.coalesce(func.max(Hand.ordinal), 0)).where(Hand.room_id == room_id)
         )
-        assert state.bb_seat == pos.big_blind
-
-        ordinal = (
-            await tx.db.scalar(
-                select(func.coalesce(func.max(Hand.ordinal), 0)).where(Hand.room_id == room_id)
+    ) + 1
+    hand_id = uuid.uuid4()
+    snapshot_cfg = {
+        "sb": hand_cfg.small_blind,
+        "bb": hand_cfg.big_blind,
+        "rules_version": hand_cfg.rules_version,
+        "button_seat": pos.button,
+        "seat_order": list(pos.participants),
+        "min_buyin": cfg["min_buyin"],
+        "max_buyin": cfg["max_buyin"],
+        "seat_members": {str(n): str(by_no[n].member_id) for n in pos.participants},
+    }
+    hand = Hand(
+        id=hand_id,
+        room_id=room_id,
+        ordinal=ordinal,
+        phase=state.phase.value,
+        button_seat=pos.button,
+        config_snapshot=snapshot_cfg,
+        room_version=room.version,
+        hand_snapshot_encrypted=b"\x00",
+        idempotency_key=idempotency_key,
+    )
+    tx.db.add(hand)
+    await tx.db.flush()
+    cipher = get_cipher()
+    for n in pos.participants:
+        p = state.players[n]
+        tx.db.add(
+            HandPlayer(
+                hand_id=hand_id,
+                seat_no=n,
+                member_id=by_no[n].member_id,
+                hole_cards_ciphertext=cipher.encrypt_json(
+                    p.hole_cards, aad=hand_id.bytes + bytes([n])
+                ),
+                street_contribution=0,
+                total_contribution=0,
+                folded=False,
+                all_in=False,
+                show_status="HIDDEN",
             )
-        ) + 1
-        hand_id = uuid.uuid4()
-        snapshot_cfg = {
-            "sb": hand_cfg.small_blind,
-            "bb": hand_cfg.big_blind,
-            "rules_version": hand_cfg.rules_version,
-            "button_seat": pos.button,
-            "seat_order": list(pos.participants),
-            "min_buyin": cfg["min_buyin"],
-            "max_buyin": cfg["max_buyin"],
-            "seat_members": {str(n): str(by_no[n].member_id) for n in pos.participants},
-        }
-        hand = Hand(
-            id=hand_id,
-            room_id=room_id,
-            ordinal=ordinal,
-            phase=state.phase.value,
-            button_seat=pos.button,
-            config_snapshot=snapshot_cfg,
-            room_version=room.version,
-            hand_snapshot_encrypted=b"\x00",
-            idempotency_key=idempotency_key,
         )
-        tx.db.add(hand)
-        await tx.db.flush()
-        cipher = get_cipher()
-        for n in pos.participants:
-            p = state.players[n]
-            tx.db.add(
-                HandPlayer(
-                    hand_id=hand_id,
-                    seat_no=n,
-                    member_id=by_no[n].member_id,
-                    hole_cards_ciphertext=cipher.encrypt_json(
-                        p.hole_cards, aad=hand_id.bytes + bytes([n])
-                    ),
-                    street_contribution=0,
-                    total_contribution=0,
-                    folded=False,
-                    all_in=False,
-                    show_status="HIDDEN",
-                )
-            )
-            by_no[n].participation_state = "ACTIVE"
-        await tx.db.flush()
-        room.button_seat, room.bb_seat = pos.button, pos.big_blind
-        tx.emit("hand.started_meta", {"hand_id": str(hand_id), "ordinal": ordinal})
-        version = await _persist_hand(tx, hand, state, events)
-        return {
-            "hand_id": str(hand_id),
-            "ordinal": ordinal,
-            "room_version": version,
-            "replayed": False,
-        }
+        by_no[n].participation_state = "ACTIVE"
+    await tx.db.flush()
+    room.button_seat, room.bb_seat = pos.button, pos.big_blind
+    room.next_hand_at = None
+    tx.emit("hand.started_meta", {"hand_id": str(hand_id), "ordinal": ordinal})
+    version = await _persist_hand(tx, hand, state, events)
+    return {
+        "hand_id": str(hand_id),
+        "ordinal": ordinal,
+        "room_version": version,
+        "replayed": False,
+    }
 
 
 async def player_action(
@@ -560,22 +619,80 @@ async def player_action(
         return result
 
 
-async def process_timeout(room_id: uuid.UUID, hand_id: uuid.UUID, expected_version: int) -> bool:
-    """Timer wake-up: reload, validate hand/version/deadline, then Check-or-Fold.
-    Idempotent: a stale wake-up is a no-op (SDD §9)."""
+async def process_timeout(
+    room_id: uuid.UUID, hand_id: uuid.UUID | None = None, expected_version: int | None = None
+) -> bool:
+    """Timer/sweeper wake-up: reload and validate (live hand, deadline passed), then
+    fold the actor and sit them out from the next hand. Idempotent: a stale wake-up
+    is a no-op because the next actor's deadline lies in the future (SDD §9).
+
+    Deliberately NOT keyed on room.version: unrelated room changes (someone sits
+    down, host election, top-up requests) must not cancel a pending timeout.
+    `expected_version` is accepted for backward compatibility and ignored."""
+    del expected_version
     async with room_tx(room_id) as tx:
         room = tx.room
-        if room.operational_status != "ACTIVE" or room.version != expected_version:
+        if room.operational_status != "ACTIVE":
             return False
         hand = await live_hand(tx.db, room_id)
-        if hand is None or hand.id != hand_id or hand.deadline_at is None:
+        if hand is None or (hand_id is not None and hand.id != hand_id):
             return False
-        if clock.now() < hand.deadline_at:
+        if hand.deadline_at is None or clock.now() < hand.deadline_at:
             return False
-        new_state, events = timeout_action(load_state(hand))
+        state = load_state(hand)
+        seat_no = state.actor_seat
+        new_state, events = timeout_action(state)
+        if seat_no is not None:
+            seat = await tx.db.get(TableSeat, (room_id, seat_no))
+            if seat is not None and seat.member_id == seat_members(hand).get(seat_no):
+                seat.sit_out_next = True  # applied in _finalize -> SITTING_OUT
+                tx.emit(
+                    "player.sit_out",
+                    {"seat_no": seat_no, "sit_out": True, "reason": "TIMEOUT"},
+                )
         await _persist_hand(tx, hand, new_state, events)
         metrics.inc("timeouts")
         return True
+
+
+async def overdue_rooms() -> list[uuid.UUID]:
+    """Rooms whose live hand deadline has passed (sweeper safety net)."""
+    from app.persistence.db import new_session
+
+    async with new_session() as db:
+        return list(
+            (
+                await db.scalars(
+                    select(Hand.room_id)
+                    .join(Room, Room.id == Hand.room_id)
+                    .where(
+                        Hand.ended_at.is_(None),
+                        Hand.deadline_at.is_not(None),
+                        Hand.deadline_at < clock.now() - timedelta(seconds=1),
+                        Room.operational_status == "ACTIVE",
+                    )
+                )
+            ).all()
+        )
+
+
+async def due_deal_rooms() -> list[uuid.UUID]:
+    from app.persistence.db import new_session
+
+    async with new_session() as db:
+        return list(
+            (
+                await db.scalars(
+                    select(Room.id).where(
+                        Room.auto_deal.is_(True),
+                        Room.next_hand_at.is_not(None),
+                        Room.next_hand_at <= clock.now(),
+                        Room.status != "CLOSED",
+                        Room.operational_status == "ACTIVE",
+                    )
+                )
+            ).all()
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -625,7 +742,7 @@ async def resume(room_id: uuid.UUID, guest_id: uuid.UUID) -> dict:
             hand.room_version = v
             if deadline is not None:
                 rid, hid = room_id, hand.id
-                tx.after_commit.append(lambda: timers.schedule(rid, hid, v, deadline))
+                tx.after_commit.append(lambda: timers.schedule(rid, hid, deadline))
         tx.emit("room.resumed", {"deadline_at": deadline.isoformat() if deadline else None})
         return {
             "room_version": v,

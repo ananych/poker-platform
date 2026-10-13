@@ -1,3 +1,4 @@
+import { getLang, translate, type MsgKey } from "./i18n";
 import type {
   ApiErrorBody, ChatMessage, Guest, HandSummary, LedgerEntry, LedgerSummary, Me, Replay,
   RoomConfig, RoomView,
@@ -35,7 +36,8 @@ async function request<T>(method: string, path: string, body?: unknown,
       cache: "no-store",
     });
   } catch {
-    throw new ApiError({ code: "INTERNAL", message: "無法連線到伺服器", room_version: null }, 0);
+    throw new ApiError({ code: "INTERNAL", message: translate(getLang(), "common.cannot_connect"),
+                         room_version: null }, 0);
   }
   const data = await res.json().catch(() => null);
   if (!res.ok) {
@@ -76,6 +78,8 @@ export const api = {
     request<{ hand_id: string }>("POST", `/rooms/${roomId}/start-hand`, { expected_room_version },
       { "Idempotency-Key": `${roomId}:${expected_room_version}` }),
   resume: (roomId: string) => request("POST", `/rooms/${roomId}/resume`),
+  autoDeal: (roomId: string, enabled: boolean) =>
+    request("POST", `/rooms/${roomId}/auto-deal`, { enabled }),
   rotateInvite: (roomId: string) =>
     request<{ invite_token: string; invite_path: string }>("POST", `/rooms/${roomId}/invite`),
   config: (roomId: string, patch: Partial<RoomConfig>) =>
@@ -101,26 +105,24 @@ export const api = {
 };
 
 export function errorText(e: unknown): string {
-  if (e instanceof ApiError) return ERROR_TEXT[e.code] ?? e.message;
-  return "發生錯誤，請再試一次";
+  const lang = getLang();
+  if (e instanceof ApiError) {
+    const key = `err.${e.code}` as MsgKey;
+    return key in ERR_KEYS ? translate(lang, key) : e.message;
+  }
+  return translate(lang, "common.error_retry");
 }
 
-export const ERROR_TEXT: Partial<Record<string, string>> = {
-  UNAUTHORIZED: "請先以訪客身分進入，或邀請連結無效",
-  INVALID_PASSWORD: "房間密碼錯誤",
-  ROOM_BANNED: "你已被此房間封鎖",
-  ROOM_CLOSED: "房間已關閉",
-  INVALID_BUYIN: "買入金額不在允許範圍內",
-  NOT_HOST: "只有房主可以這麼做",
-  HAND_ALREADY_RUNNING: "已有牌局進行中",
-  NOT_YOUR_TURN: "還沒輪到你",
-  INVALID_ACTION: "這個動作目前不合法",
-  STALE_VERSION: "牌桌狀態已更新，請再操作一次",
-  DEADLINE_EXPIRED: "已超過行動時間",
-  TOPUP_LIMIT_EXCEEDED: "超過最大買入上限",
-  RATE_LIMITED: "操作太頻繁，請稍候",
-  NOT_MEMBER: "你還不是這個房間的成員",
-  SEAT_TAKEN: "這個座位已經有人",
-  ALREADY_SEATED: "你已經有座位了",
-  ROOM_PAUSED: "牌局暫停中，等待房主繼續",
-};
+/** Localized text for an error code (falls back to the server message). */
+export function errorCodeText(code: string | undefined, fallback?: string): string {
+  const key = `err.${code}` as MsgKey;
+  if (code && key in ERR_KEYS) return translate(getLang(), key);
+  return fallback ?? translate(getLang(), "common.action_failed");
+}
+
+const ERR_KEYS: Record<string, true> = Object.fromEntries(
+  ["UNAUTHORIZED", "INVALID_PASSWORD", "ROOM_BANNED", "ROOM_CLOSED", "INVALID_BUYIN", "NOT_HOST",
+   "HAND_ALREADY_RUNNING", "NOT_YOUR_TURN", "INVALID_ACTION", "STALE_VERSION", "DEADLINE_EXPIRED",
+   "TOPUP_LIMIT_EXCEEDED", "RATE_LIMITED", "NOT_MEMBER", "SEAT_TAKEN", "ALREADY_SEATED",
+   "ROOM_PAUSED", "VALIDATION_ERROR", "NOT_FOUND"].map((c) => [`err.${c}`, true]),
+);

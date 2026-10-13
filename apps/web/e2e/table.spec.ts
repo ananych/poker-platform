@@ -56,7 +56,7 @@ test("phone host + desktop guest play a hand", async ({ browser }) => {
   await guest.getByRole("button", { name: "坐到 4 號位" }).click();
   await guest.getByRole("button", { name: "坐下", exact: true }).click();
   await expect(guest.getByText("Bob（你）")).toBeVisible();
-  await expect(host.getByText("Bob")).toBeVisible();
+  await expect(host.getByText("Bob", { exact: true })).toBeVisible();
 
   // host starts the hand from the phone
   await host.getByRole("button", { name: "開始下一手" }).click();
@@ -80,34 +80,69 @@ test("phone host + desktop guest play a hand", async ({ browser }) => {
   await tapTargetsOk(host);
 
   // host raises with the pot preset, guest calls, then both check down
-  await host.getByRole("button", { name: "1 池" }).click();
+  await host.getByRole("button", { name: "1 池", exact: true }).click();
   await host.getByRole("button", { name: /加注到/ }).click();
   await expect(guest.getByText("輪到你了")).toBeVisible();
-  await guest.getByRole("button", { name: /跟注/ }).click();
+  await guest.getByRole("button", { name: /^跟注/ }).click();
   for (let i = 0; i < 40; i++) {
-    if (await host.getByText(/主池/).isVisible()) break;
+    if (await host.getByText(/贏得/).isVisible()) break;
     for (const p of [guest, host]) {
-      const check = p.getByRole("button", { name: "過牌" });
+      const check = p.getByRole("button", { name: "過牌", exact: true });
       if (await check.isVisible()) { await check.click(); await p.waitForTimeout(250); }
     }
     await host.waitForTimeout(200);
   }
-  await expect(host.getByText(/主池/)).toBeVisible({ timeout: 15_000 });
+  await expect(host.getByText(/贏得/)).toBeVisible({ timeout: 15_000 });
+  // winner is marked on the seat, and each player still sees their own cards after the hand
+  await expect(host.getByText(/🏆 \+/)).toBeVisible();
+  for (const c of hostCards) await expect(host.getByLabel(c!, { exact: true }).first()).toBeVisible();
+  for (const c of guestOwn) await expect(guest.getByLabel(c!, { exact: true }).first()).toBeVisible();
+  // running profit/loss on every seat
+  await expect(host.getByText(/^總 [+−0]/).first()).toBeVisible();
   await host.screenshot({ path: `${shots}/04-phone-result.png` });
   await guest.screenshot({ path: `${shots}/05-desktop-result.png` });
 
-  // chat + history (desktop side panel)
+  // chat: bubble over the sender's seat + toast for the other player
   await guest.getByLabel("聊天訊息").fill("nice hand <b>!</b>");
   await guest.getByRole("button", { name: "送出" }).click();
-  await expect(guest.getByText("nice hand <b>!</b>")).toBeVisible();
+  await expect(guest.getByText("nice hand <b>!</b>").first()).toBeVisible();
+  await expect(host.getByText(/💬 Bob: nice hand/)).toBeVisible();
+  await expect(host.locator(".seat-bubble")).toHaveText("nice hand <b>!</b>");
+  await host.screenshot({ path: `${shots}/06-phone-chat-bubble.png` });
+
+  // auto-deal: hand #2 starts by itself ~5 s later, nobody clicks
+  await expect(host.getByText(/下一手 \d+ 秒後開始/)).toBeVisible();
+  await expect(host.getByText(/#2 · 翻牌前/)).toBeVisible({ timeout: 12_000 });
+
+  // pre-action: the waiting player queues "跟任何注", the actor raises, the call fires by itself
+  const [actor, waiter] = (await host.getByText("輪到你了").isVisible()) ? [host, guest] : [guest, host];
+  await waiter.getByRole("button", { name: /跟任何注/ }).click();
+  await expect(waiter.getByRole("button", { name: /跟任何注/ })).toHaveAttribute("aria-pressed", "true");
+  await actor.getByRole("button", { name: "1 池", exact: true }).click();
+  await actor.getByRole("button", { name: /加注到/ }).click();
+  await expect(host.getByText(/#2 · 翻牌$/)).toBeVisible({ timeout: 10_000 });
+  await waiter.screenshot({ path: `${shots}/07-preaction-fired.png` });
+
+  // English UI
+  await guest.getByRole("button", { name: "設定" }).click();
+  await guest.getByRole("button", { name: "English" }).click();
+  await expect(guest.getByRole("tab", { name: "Chat" })).toBeVisible();
+  await expect(guest.getByText(/#2 · Flop/)).toBeVisible();
+  await guest.screenshot({ path: `${shots}/08-desktop-english.png` });
+  await guest.getByRole("button", { name: "中文" }).click();
+  await guest.keyboard.press("Escape");
+
+  // standings + history (desktop side panel)
+  await guest.getByRole("tab", { name: "戰績" }).click();
+  await expect(guest.getByText("水上水下")).toBeVisible();
   await guest.getByRole("tab", { name: "歷史" }).click();
   await guest.getByText("#1 ·").click();
   await guest.waitForURL(/\/hands\//);
   await guest.getByRole("button", { name: "播放" }).click();
   await guest.waitForTimeout(1500);
-  await guest.screenshot({ path: `${shots}/06-desktop-replay.png` });
+  await guest.screenshot({ path: `${shots}/09-desktop-replay.png` });
   await host.goto(guest.url());
   await expect(host.getByText(/回放 #1/)).toBeVisible();
-  await host.screenshot({ path: `${shots}/07-phone-replay.png` });
+  await host.screenshot({ path: `${shots}/10-phone-replay.png` });
   await noHorizontalScroll(host);
 });

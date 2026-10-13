@@ -4,11 +4,11 @@ import { useEffect, useState } from "react";
 import { api, errorText } from "@/lib/api";
 import { chips } from "@/lib/poker";
 import type { LedgerSummary, MemberView } from "@/lib/types";
-
-const TYPE_ZH: Record<string, string> = { BUY_IN: "買入", TOP_UP: "補碼", CASH_OUT: "結帳", CORRECTION: "更正" };
+import { useT, type MsgKey } from "@/lib/i18n";
 
 export function LedgerPanel({ roomId, members, refreshKey }:
   { roomId: string; members: MemberView[]; refreshKey: unknown }) {
+  const { t } = useT();
   const [summary, setSummary] = useState<LedgerSummary[]>([]);
   const [entries, setEntries] = useState<{ id: string; member_id: string; type: string; amount: number }[]>([]);
   const [err, setErr] = useState<string | null>(null);
@@ -20,13 +20,13 @@ export function LedgerPanel({ roomId, members, refreshKey }:
   return (
     <div className="h-full space-y-3 overflow-y-auto p-3 text-sm">
       <p className="text-[11px] leading-snug text-neutral-500">
-        只記錄虛擬籌碼。淨值 = 結帳 + 目前籌碼 − 買入 − 補碼。系統不處理任何真實金錢。
+        {t("ledger.note")}
       </p>
       {err && <p className="text-red-400">{err}</p>}
       <table className="w-full text-xs tabular-nums">
         <thead className="text-neutral-400"><tr>
-          <th className="text-left font-normal">玩家</th><th className="text-right font-normal">投入</th>
-          <th className="text-right font-normal">現有</th><th className="text-right font-normal">淨值</th>
+          <th className="text-left font-normal">{t("ledger.player")}</th><th className="text-right font-normal">{t("ledger.invested")}</th>
+          <th className="text-right font-normal">{t("ledger.holding")}</th><th className="text-right font-normal">{t("ledger.net")}</th>
         </tr></thead>
         <tbody>
           {summary.map((s) => (
@@ -42,11 +42,11 @@ export function LedgerPanel({ roomId, members, refreshKey }:
         </tbody>
       </table>
       <details className="text-xs">
-        <summary className="cursor-pointer text-neutral-400">所有紀錄（{entries.length}）</summary>
+        <summary className="cursor-pointer text-neutral-400">{t("ledger.all", { n: entries.length })}</summary>
         <ul className="mt-1 space-y-0.5">
           {entries.map((e) => (
             <li key={e.id} className="flex justify-between">
-              <span>{nick.get(e.member_id) ?? "?"} · {TYPE_ZH[e.type] ?? e.type}</span>
+              <span>{nick.get(e.member_id) ?? "?"} · {t(`ledger.${e.type}` as MsgKey) ?? e.type}</span>
               <span className="tabular-nums">{chips(e.amount)}</span>
             </li>
           ))}

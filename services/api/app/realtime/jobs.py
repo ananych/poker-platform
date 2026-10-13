@@ -11,7 +11,7 @@ from app.config import get_settings
 from app.persistence.db import new_session
 from app.persistence.models import GuestSession, Room
 from app.realtime.gateway import gateway
-from app.services import chat, clock, rooms
+from app.services import chat, clock, rooms, table
 
 log = logging.getLogger("poker.jobs")
 
@@ -24,6 +24,17 @@ async def sweep_once() -> None:
             await rooms.sweep_room(rid, gateway.connected_members(rid))
         except Exception:
             log.exception("sweep failed room=%s", rid)
+    # safety nets: in-process timers are an optimization, the DB columns are truth
+    for rid in await table.overdue_rooms():
+        try:
+            await table.process_timeout(rid)
+        except Exception:
+            log.exception("overdue timeout failed room=%s", rid)
+    for rid in await table.due_deal_rooms():
+        try:
+            await table.auto_start_hand(rid)
+        except Exception:
+            log.exception("auto-deal failed room=%s", rid)
 
 
 async def maintenance_once() -> dict:

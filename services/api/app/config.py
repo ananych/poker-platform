@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     allowed_origins: list[str] = ["http://localhost:3000"]
     action_timeout_seconds: int = 30
     host_disconnect_grace_seconds: int = 60
+    auto_deal_delay_seconds: int = 5  # pause between hands before auto-dealing
+    sit_out_stand_up_minutes: int = 10  # sitting out longer than this -> stand up + cash out
     empty_room_close_hours: int = 24
     max_chat_length: int = 500
     background_jobs: bool = True  # timers, sweeper, startup recovery

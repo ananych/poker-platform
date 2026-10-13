@@ -291,12 +291,21 @@ def test_blind_all_in_short():
     assert st.result.refunds.get(1) == 3
 
 
-def test_timeout_checks_then_folds():
+def test_timeout_always_folds_by_default():
     st, _ = new({1: 1000, 2: 1000}, button=1)
     st2, ev = timeout_action(st)  # SB facing BB -> fold
     assert ev[0]["public"]["action"] == "FOLD" and ev[0]["public"]["timeout"]
     st = act(st, A.CALL)
-    st3, ev = timeout_action(st)  # BB option -> check
+    _, ev = timeout_action(st)  # BB option: still folds (product rule)
+    assert ev[0]["public"]["action"] == "FOLD"
+
+
+def test_timeout_check_or_fold_policy():
+    st, _ = new({1: 1000, 2: 1000}, button=1)
+    _, ev = timeout_action(st, check_if_possible=True)
+    assert ev[0]["public"]["action"] == "FOLD"
+    st = act(st, A.CALL)
+    st3, ev = timeout_action(st, check_if_possible=True)  # BB option -> check
     assert ev[0]["public"]["action"] == "CHECK"
     assert st3.phase == Phase.FLOP
 

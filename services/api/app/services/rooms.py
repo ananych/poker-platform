@@ -35,6 +35,7 @@ from app.services.table import (
     remove_from_table,
     require_host,
     require_open,
+    seat_members,
     seat_of,
 )
 from app.services.uow import room_tx
@@ -412,6 +413,27 @@ async def sweep_room(room_id: uuid.UUID, connected: set[uuid.UUID]) -> None:
                 await _elect(tx, connected, exclude=room.host_member_id)
         elif connected:
             await _elect(tx, connected, exclude=None)
+        # stand up players who have been sitting out too long (seat freed, chips to ledger)
+        cutoff = now - timedelta(minutes=s.sit_out_stand_up_minutes)
+        idle = (
+            await tx.db.scalars(
+                select(TableSeat).where(
+                    TableSeat.room_id == room_id,
+                    TableSeat.participation_state == "SITTING_OUT",
+                    TableSeat.sitting_out_since.is_not(None),
+                    TableSeat.sitting_out_since <= cutoff,
+                )
+            )
+        ).all()
+        if idle:
+            hand = await live_hand(tx.db, room_id)
+            in_hand = set(seat_members(hand)) if hand is not None else set()
+            for seat in idle:
+                if seat.seat_no in in_hand:
+                    continue
+                await _cash_out(tx, seat)
+                tx.emit("player.stood_up", {"seat_no": seat.seat_no, "reason": "SIT_OUT_TIMEOUT"})
+                tx.bump()
         if (
             room.status == "EMPTY_PENDING_CLOSE"
             and room.empty_since is not None

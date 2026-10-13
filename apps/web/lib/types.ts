@@ -76,6 +76,12 @@ export interface PotResult { index: number; amount: Chips; eligible: number[]; w
 export interface LastHand {
   hand_id: string;
   ordinal: number;
+  ended_at?: string | null;
+  /** seat_no -> member_id for the finished hand */
+  seat_members?: Record<string, string>;
+  /** only for a viewer who played the hand: their own hole cards (even if folded) */
+  my_seat?: number;
+  my_cards?: string[];
   showdown?: {
     board: string[];
     shown: { seat_no: number; hole_cards: string[]; rank: string; best_five: string[] }[];
@@ -103,6 +109,13 @@ export interface SeatView {
   pending_leave: boolean;
   sit_out_next: boolean;
   connected: boolean;
+  /** stack (+ chips committed to the live pot) + cash-outs − buy-ins − top-ups */
+  net: Chips;
+}
+
+export interface Standing {
+  member_id: string; nickname: string | null; seated: boolean;
+  invested: Chips; cashed_out: Chips; stack: Chips; net: Chips;
 }
 
 export interface TopupView { request_id: string; amount: Chips; status: string }
@@ -113,6 +126,9 @@ export interface RoomView {
   name: string | null;
   status: "OPEN" | "EMPTY_PENDING_CLOSE" | "CLOSED";
   operational_status: "ACTIVE" | "PAUSED_RECOVERY";
+  auto_deal: boolean;
+  next_hand_at: string | null;
+  standings: Standing[];
   room_version: number;
   config: RoomConfig;
   pending_config: RoomConfig | null;

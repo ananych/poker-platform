@@ -1,3 +1,4 @@
+import type { MsgKey, TFn } from "./i18n";
 import type { HandView, LegalActions } from "./types";
 
 export const SUIT_SYMBOL: Record<string, string> = { s: "♠", h: "♥", d: "♦", c: "♣" };
@@ -40,13 +41,32 @@ export function seatPosition(seat: number, mySeat: number | null) {
   return { left: 50 + 44 * Math.cos(angle), top: 50 + 41 * Math.sin(angle) };
 }
 
-export const PHASE_LABEL: Record<string, string> = {
-  PREFLOP: "翻牌前", FLOP: "翻牌", TURN: "轉牌", RIVER: "河牌", SHOWDOWN: "攤牌",
-  SETTLEMENT: "結算", HAND_COMPLETE: "結束",
-};
+export function phaseKey(phase: string): MsgKey {
+  return `phase.${phase}` as MsgKey;
+}
 
-export const RANK_NAME_ZH: Record<string, string> = {
-  "Royal Flush": "皇家同花順", "Straight Flush": "同花順", "Four Of A Kind": "四條",
-  "Full House": "葫蘆", "Flush": "同花", "Straight": "順子", "Three Of A Kind": "三條",
-  "Two Pair": "兩對", "One Pair": "一對", "High Card": "高牌",
-};
+const RANKS = new Set(["Royal Flush", "Straight Flush", "Four Of A Kind", "Full House", "Flush",
+  "Straight", "Three Of A Kind", "Two Pair", "One Pair", "High Card"]);
+export function rankText(t: TFn, rank: string | undefined | null): string {
+  if (!rank) return "";
+  return RANKS.has(rank) ? t(`rank.${rank}` as MsgKey) : rank;
+}
+
+/** Signed chip delta, e.g. +1,200 / −300 / 0. */
+export function signed(n: number): string {
+  if (n > 0) return `+${chips(n)}`;
+  if (n < 0) return `−${chips(-n)}`;
+  return "0";
+}
+
+const AVATAR_COLORS = ["#e11d48", "#d97706", "#65a30d", "#0891b2", "#4f46e5", "#c026d3",
+  "#ea580c", "#059669", "#2563eb", "#9333ea"];
+export function avatarColor(seed: string): string {
+  let h = 0;
+  for (const ch of seed) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return AVATAR_COLORS[h % AVATAR_COLORS.length];
+}
+export function initial(name: string | null | undefined): string {
+  const s = (name ?? "?").trim();
+  return s ? [...s][0].toUpperCase() : "?";
+}

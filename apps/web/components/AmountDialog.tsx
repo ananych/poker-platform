@@ -3,11 +3,13 @@
 import { useState } from "react";
 import { Modal, btnPrimary, inputCls } from "./Modal";
 import { chips } from "@/lib/poker";
+import { useT } from "@/lib/i18n";
 
 export function AmountDialog({ title, min, max, initial, confirm, onSubmit, onClose }: {
   title: string; min: number; max: number; initial: number; confirm: string;
   onSubmit: (amount: number) => Promise<string | null>; onClose: () => void;
 }) {
+  const { t } = useT();
   const [v, setV] = useState(String(initial));
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -23,13 +25,13 @@ export function AmountDialog({ title, min, max, initial, confirm, onSubmit, onCl
         setBusy(false);
         if (r) setErr(r); else onClose();
       }}>
-        <p className="text-xs text-neutral-400">範圍 {chips(min)} – {chips(max)}（整數籌碼）</p>
+        <p className="text-xs text-neutral-400">{t("common.range", { min: chips(min), max: chips(max) })}</p>
         {max > min && (
           <input type="range" min={min} max={max} step={1} value={valid ? n : min}
                  onChange={(e) => setV(e.target.value)} className="h-11 accent-amber-400" />
         )}
         <input inputMode="numeric" value={v} onChange={(e) => setV(e.target.value.replace(/\D/g, ""))}
-               className={inputCls} aria-label="金額" />
+               className={inputCls} aria-label={t("common.amount")} />
         {err && <p role="alert" className="text-sm text-red-400">{err}</p>}
         <button disabled={!valid || busy} className={btnPrimary}>{confirm}</button>
       </form>

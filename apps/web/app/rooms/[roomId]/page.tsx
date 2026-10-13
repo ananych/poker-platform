@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ActionBar } from "@/components/ActionBar";
 import { AmountDialog } from "@/components/AmountDialog";
 import { ChatPanel } from "@/components/ChatPanel";
@@ -12,17 +12,25 @@ import { HostPanel, InviteBox, MembersPanel } from "@/components/HostPanel";
 import { LedgerPanel } from "@/components/LedgerPanel";
 import { btnGhost } from "@/components/Modal";
 import { PokerTable } from "@/components/PokerTable";
+import { SettingsMenu } from "@/components/Settings";
+import { StandingsList, StandingsPanel } from "@/components/StandingsPanel";
 import { api, errorText } from "@/lib/api";
+import { useT } from "@/lib/i18n";
 import { chips } from "@/lib/poker";
+import { notify, play, vibrate } from "@/lib/sound";
+import type { ChatMessage, RoomView } from "@/lib/types";
 import { useMedia } from "@/lib/useMedia";
 import { useRoom } from "@/lib/useRoom";
 
-type Tab = "chat" | "members" | "history" | "ledger" | "host";
+type Tab = "chat" | "standings" | "members" | "history" | "ledger" | "host";
+const BUBBLE_MS = 5000;
+const STANDINGS_EVERY = 5; // pop the standings every N hands
 
 export default function RoomPage() {
   const { roomId } = useParams<{ roomId: string }>();
+  const { t } = useT();
   const room = useRoom(roomId);
-  const { view, status, loadError, notice, setNotice, clockOffset } = room;
+  const { view, status, loadError, notice, setNotice, clockOffset, onEvent } = room;
   const [tab, setTab] = useState<Tab>("chat");
   const [drawer, setDrawer] = useState(false);
   const [sitAt, setSitAt] = useState<number | null>(null);
@@ -30,8 +38,19 @@ export default function RoomPage() {
   const [hidden, setHidden] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [unread, setUnread] = useState(0);
+  const [bubbles, setBubbles] = useState<Record<string, string>>({});
+  const [bigWin, setBigWin] = useState<number | null>(null);
+  const [standingsPop, setStandingsPop] = useState<number | null>(null);
   const remaining = useRemaining(view?.hand?.deadline_at, clockOffset);
   const desktop = useMedia("(min-width: 1024px)");
+
+  const viewRef = useRef<RoomView | null>(null);
+  viewRef.current = view;
+  const lastSeatRef = useRef<number | null>(null);
+  if (view?.me?.seat_no) lastSeatRef.current = view.me.seat_no;
+  const chatVisible = desktop ? tab === "chat" : drawer && tab === "chat";
+  const chatVisibleRef = useRef(chatVisible);
+  chatVisibleRef.current = chatVisible;
 
   // UX mitigation only (not a security boundary): hide private cards when backgrounded
   useEffect(() => {
@@ -44,36 +63,135 @@ export default function RoomPage() {
   }, [notice, setNotice]);
   useEffect(() => {
     if (!toast) return;
-    const t = setTimeout(() => setToast(null), 3500);
-    return () => clearTimeout(t);
+    const tm = setTimeout(() => setToast(null), 4000);
+    return () => clearTimeout(tm);
   }, [toast]);
-  const seenChat = useRef<number | null>(null);
-  useEffect(() => {
-    const n = room.chat.length;
-    if (seenChat.current !== null && n > seenChat.current && !(tab === "chat" && drawer)) {
-      setUnread((u) => u + (n - seenChat.current!));
-    }
-    seenChat.current = n;
-  }, [room.chat.length]); // eslint-disable-line react-hooks/exhaustive-deps
   // just created: open the host tab so the invite link is visible
   useEffect(() => {
     if (window.location.search.includes("created=1")) { setTab("host"); setDrawer(true); }
   }, []);
-  useEffect(() => { if (tab === "chat" && drawer) setUnread(0); }, [tab, drawer]);
+  useEffect(() => { if (chatVisible) setUnread(0); }, [chatVisible]);
+
+  const showBubble = useCallback((memberId: string, text: string) => {
+    setBubbles((b) => ({ ...b, [memberId]: text }));
+    setTimeout(() => setBubbles((b) => {
+      if (b[memberId] !== text) return b;
+      const { [memberId]: _, ...rest } = b; // eslint-disable-line @typescript-eslint/no-unused-vars
+      return rest;
+    }), BUBBLE_MS);
+  }, []);
+
+  // ---- realtime events -> sound, bubbles, alerts ---------------------------
+  useEffect(() => onEvent((e) => {
+    const v = viewRef.current;
+    const me = v?.me;
+    const p = e.payload as Record<string, unknown>;
+    switch (e.type) {
+      case "hand.started":
+        play("deal");
+        break;
+      case "hand.street_changed":
+        play("flip");
+        break;
+      case "game.action": {
+        const a = p.action as string;
+        if (a === "FOLD") play("fold");
+        else if (a === "CHECK") play("check");
+        else if (a === "ALL_IN" || p.all_in) play("allin");
+        else play("chip");
+        break;
+      }
+      case "hand.completed": {
+        const mine = lastSeatRef.current;
+        const won = mine ? (p.payouts as Record<string, number> | undefined)?.[String(mine)] : undefined;
+        if (won && won > 0) {
+          play("win");
+          vibrate([80, 60, 160]);
+          setBigWin(won);
+          setTimeout(() => setBigWin(null), 3200);
+        }
+        break;
+      }
+      case "chat.message": {
+        const m = p as unknown as ChatMessage;
+        showBubble(m.member_id, m.body);
+        if (m.member_id !== me?.member_id) {
+          play("msg");
+          if (!chatVisibleRef.current) {
+            setUnread((u) => u + 1);
+            setToast(`💬 ${m.nickname ?? "?"}: ${m.body.slice(0, 80)}`);
+          }
+          notify(`💬 ${m.nickname ?? "?"}`, m.body.slice(0, 120));
+        }
+        break;
+      }
+      case "player.sit_out":
+        if (p.reason === "TIMEOUT" && p.seat_no === lastSeatRef.current) {
+          setToast(t("room.timeout_notice"));
+          vibrate(200);
+        }
+        break;
+      case "player.stood_up":
+        if (p.reason === "SIT_OUT_TIMEOUT" && p.seat_no === lastSeatRef.current) {
+          setToast(t("room.stood_up_notice", { m: 10 }));
+        }
+        break;
+    }
+  }), [onEvent, showBubble, t]);
+
+  // ---- my turn: ding + vibrate + background notification -----------------
+  const turnKey = view?.hand?.legal_actions ? `${view.hand.hand_id}:${view.hand.phase}:${view.hand.current_bet}:${view.hand.actor_seat}` : null;
+  const lastTurn = useRef<string | null>(null);
+  useEffect(() => {
+    if (!turnKey || lastTurn.current === turnKey) return;
+    lastTurn.current = turnKey;
+    play("turn");
+    vibrate([120, 80, 120]);
+    notify(t("room.your_turn_title"), view?.name ?? undefined);
+  }, [turnKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ---- tab title: turn / unread while backgrounded -------------------------
+  useEffect(() => {
+    const base = view?.name ? `${view.name} · Private Hold'em` : "Private Hold'em";
+    if (turnKey) {
+      let on = true;
+      const tm = setInterval(() => {
+        document.title = on ? t("room.your_turn_title") : base;
+        on = !on;
+      }, 1000);
+      return () => { clearInterval(tm); document.title = base; };
+    }
+    document.title = unread > 0 ? `(${unread}) ${base}` : base;
+  }, [turnKey, unread, view?.name, t]);
+
+  // ---- standings pop-up every N hands ---------------------------------------
+  const lastOrdinal = view?.last_hand?.ordinal;
+  const seenOrdinal = useRef<number | null>(null);
+  useEffect(() => {
+    if (!lastOrdinal) return;
+    if (seenOrdinal.current === null) { seenOrdinal.current = lastOrdinal; return; }
+    if (lastOrdinal !== seenOrdinal.current) {
+      seenOrdinal.current = lastOrdinal;
+      if (lastOrdinal % STANDINGS_EVERY === 0) {
+        setStandingsPop(lastOrdinal);
+        setTimeout(() => setStandingsPop((o) => (o === lastOrdinal ? null : o)), 7000);
+      }
+    }
+  }, [lastOrdinal]);
 
   if (loadError && !view) {
     return (
       <main className="mx-auto flex min-h-dvh max-w-md flex-col justify-center gap-3 px-4">
-        <h1 className="text-lg font-semibold">無法進入房間</h1>
+        <h1 className="text-lg font-semibold">{t("room.cannot_enter")}</h1>
         <p className="text-sm text-neutral-400">{errorText(loadError)}</p>
         {loadError.code === "NOT_MEMBER" && (
-          <p className="text-sm text-neutral-400">請使用房主提供的邀請連結並輸入房間密碼。</p>)}
-        <Link href="/" className={`${btnGhost} flex items-center justify-center`}>回大廳</Link>
+          <p className="text-sm text-neutral-400">{t("room.use_invite")}</p>)}
+        <Link href="/" className={`${btnGhost} flex items-center justify-center`}>{t("common.back_lobby")}</Link>
       </main>
     );
   }
   if (!view) {
-    return <main className="flex min-h-dvh items-center justify-center text-neutral-400">載入中…</main>;
+    return <main className="flex min-h-dvh items-center justify-center text-neutral-400">{t("common.loading")}</main>;
   }
 
   const me = view.me;
@@ -84,30 +202,33 @@ export default function RoomPage() {
   const run = async (fn: () => Promise<unknown>) => {
     try { await fn(); } catch (e) { setToast(errorText(e)); }
   };
+  const away = mySeat && (mySeat.participation_state === "SITTING_OUT" || mySeat.sit_out_next);
 
   const tabs: { id: Tab; label: string; badge?: number }[] = [
-    { id: "chat", label: "聊天", badge: unread },
-    { id: "members", label: "成員" },
-    { id: "history", label: "歷史" },
-    { id: "ledger", label: "籌碼" },
-    ...(isHost ? [{ id: "host" as Tab, label: "房主", badge: pendingTopups }] : []),
+    { id: "chat", label: t("tab.chat"), badge: unread },
+    { id: "standings", label: t("tab.standings") },
+    { id: "members", label: t("tab.members") },
+    { id: "history", label: t("tab.history") },
+    { id: "ledger", label: t("tab.ledger") },
+    ...(isHost ? [{ id: "host" as Tab, label: t("tab.host"), badge: pendingTopups }] : []),
   ];
 
   const panel = (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex shrink-0 border-b border-white/10" role="tablist">
-        {tabs.map((t) => (
-          <button key={t.id} role="tab" aria-selected={tab === t.id} onClick={() => setTab(t.id)}
-                  className={`relative h-11 flex-1 text-sm ${tab === t.id ? "border-b-2 border-chip text-chip" : "text-neutral-400"}`}>
-            {t.label}
-            {!!t.badge && tab !== t.id && (
-              <span className="absolute right-1 top-1 rounded-full bg-red-600 px-1 text-[10px] text-white">{t.badge}</span>)}
+      <div className="flex shrink-0 overflow-x-auto border-b border-white/10" role="tablist">
+        {tabs.map((tb) => (
+          <button key={tb.id} role="tab" aria-selected={tab === tb.id} onClick={() => setTab(tb.id)}
+                  className={`relative h-11 min-w-[3.25rem] flex-1 whitespace-nowrap px-1 text-sm ${tab === tb.id ? "border-b-2 border-chip text-chip" : "text-neutral-400"}`}>
+            {tb.label}
+            {!!tb.badge && tab !== tb.id && (
+              <span className="absolute right-0.5 top-1 rounded-full bg-red-600 px-1 text-[10px] text-white">{tb.badge}</span>)}
           </button>
         ))}
       </div>
       <div className="min-h-0 flex-1">
         {tab === "chat" && <ChatPanel messages={room.chat} myMemberId={me?.member_id}
                                       onSend={room.sendChat} disabled={status !== "open"} />}
+        {tab === "standings" && <StandingsPanel rows={view.standings} myMemberId={me?.member_id} />}
         {tab === "members" && (
           <div className="flex h-full flex-col overflow-y-auto">
             <MembersPanel view={view} />
@@ -125,69 +246,100 @@ export default function RoomPage() {
   return (
     <div className="flex h-dvh flex-col overflow-hidden">
       {/* header */}
-      <header className="flex shrink-0 items-center gap-2 border-b border-white/10 px-3 pt-[max(0.25rem,env(safe-area-inset-top))]">
-        <Link href="/" className="flex h-11 items-center text-neutral-400" aria-label="回大廳">‹</Link>
+      <header className="flex shrink-0 items-center gap-1 border-b border-white/10 px-3 pt-[max(0.25rem,env(safe-area-inset-top))]">
+        <Link href="/" className="flex h-11 items-center pr-1 text-neutral-400" aria-label={t("common.back_lobby")}>‹</Link>
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium">{view.name ?? "私人房間"}</div>
-          <div className="text-[11px] text-neutral-500">
-            盲注 {chips(view.config.sb)}/{chips(view.config.bb)} · 買入 {chips(view.config.min_buyin)}–{chips(view.config.max_buyin)}
-            {view.pending_config && " · 下一手改設定"}
+          <div className="truncate text-sm font-medium">{view.name ?? t("room.private")}</div>
+          <div className="truncate text-[11px] text-neutral-500">
+            {t("room.blinds_line", { sb: chips(view.config.sb), bb: chips(view.config.bb),
+                                     min: chips(view.config.min_buyin), max: chips(view.config.max_buyin) })}
+            {view.pending_config && t("room.pending_cfg")}
           </div>
         </div>
-        <span className={`h-2 w-2 rounded-full ${status === "open" ? "bg-emerald-400" : "bg-amber-400"}`}
-              title={status} aria-label={`連線狀態 ${status}`} />
-        {!desktop && <button onClick={() => setDrawer(true)} className="relative h-11 rounded-lg px-3 text-sm text-neutral-300"
-                aria-label="開啟面板">
-          ☰{(unread + pendingTopups) > 0 && <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-red-500" />}
+        <span className={`h-2 w-2 shrink-0 rounded-full ${status === "open" ? "bg-emerald-400" : "bg-amber-400"}`}
+              title={status} aria-label={t("room.conn_status", { s: status })} />
+        <button onClick={() => setStandingsPop(standingsPop ? null : (view.last_hand?.ordinal ?? 0))}
+                className="flex h-11 w-11 items-center justify-center rounded-lg text-lg" aria-label={t("stand.title")}>🏆</button>
+        <SettingsMenu />
+        {!desktop && <button onClick={() => setDrawer(true)} className="relative h-11 rounded-lg px-2 text-sm text-neutral-300"
+                aria-label={t("room.open_panel")}>
+          ☰{(unread + pendingTopups) > 0 && (
+            <span className="absolute right-0 top-1 rounded-full bg-red-600 px-1 text-[10px] text-white">
+              {unread + pendingTopups}
+            </span>)}
         </button>}
       </header>
 
       {view.operational_status === "PAUSED_RECOVERY" && (
-        <div className="shrink-0 bg-amber-900/70 px-3 py-1.5 text-center text-xs">
-          伺服器重啟後牌局已凍結，等待房主按「繼續」。籌碼與手牌都已保存。
-        </div>
+        <div className="shrink-0 bg-amber-900/70 px-3 py-1.5 text-center text-xs">{t("room.paused_banner")}</div>
       )}
       {view.status === "CLOSED" && (
-        <div className="shrink-0 bg-neutral-800 px-3 py-1.5 text-center text-xs">房間已關閉，可查看歷史與籌碼紀錄。</div>
+        <div className="shrink-0 bg-neutral-800 px-3 py-1.5 text-center text-xs">{t("room.closed_banner")}</div>
       )}
       {status === "reconnecting" && (
-        <div className="shrink-0 bg-neutral-800 px-3 py-1 text-center text-xs text-neutral-300">重新連線中…</div>
+        <div className="shrink-0 bg-neutral-800 px-3 py-1 text-center text-xs text-neutral-300">{t("room.reconnecting")}</div>
       )}
 
       <div className="flex min-h-0 flex-1">
         <main className="flex min-w-0 flex-1 flex-col">
-          <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden px-1 py-2">
-            <PokerTable view={view} remaining={remaining} onSit={(n) => setSitAt(n)} />
+          <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden px-1 py-2 [container-type:size]">
+            <PokerTable view={view} remaining={remaining} clockOffset={clockOffset} bubbles={bubbles}
+                        onSit={(n) => setSitAt(n)} />
+            {bigWin !== null && (
+              <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center">
+                <div className="big-win rounded-2xl border-2 border-chip bg-black/80 px-6 py-4 text-center shadow-2xl">
+                  <div className="text-4xl">🏆</div>
+                  <div className="mt-1 text-2xl font-bold text-chip">{t("table.you_won", { amt: chips(bigWin) })}</div>
+                </div>
+              </div>
+            )}
+            {standingsPop !== null && (
+              <div className="absolute inset-x-3 top-3 z-30 mx-auto max-w-sm rounded-2xl border border-white/10 bg-neutral-950/95 p-3 shadow-2xl"
+                   role="dialog" aria-label={t("stand.title")}>
+                <div className="mb-2 flex items-center">
+                  <h2 className="flex-1 text-sm font-semibold">
+                    🏆 {t("stand.title")}
+                    {standingsPop > 0 && <span className="ml-2 text-xs font-normal text-neutral-500">{t("stand.after", { n: standingsPop })}</span>}
+                  </h2>
+                  <button onClick={() => setStandingsPop(null)} className="h-9 w-9 text-neutral-400"
+                          aria-label={t("common.close")}>×</button>
+                </div>
+                <StandingsList rows={view.standings} myMemberId={me?.member_id} compact />
+              </div>
+            )}
           </div>
 
           {/* my seat / host shortcuts; never covers the action buttons */}
           <div className="flex shrink-0 flex-wrap items-center justify-center gap-2 px-3 pb-2">
             {isHost && !view.hand && view.operational_status === "ACTIVE" && view.status !== "CLOSED" && (
               <button className="h-11 rounded-lg bg-emerald-600 px-4 text-sm font-semibold"
-                      onClick={() => run(() => api.startHand(roomId, view.room_version))}>開始下一手</button>
+                      onClick={() => run(() => api.startHand(roomId, view.room_version))}>
+                {view.next_hand_at ? t("room.deal_now") : t("room.start_hand")}
+              </button>
             )}
             {isHost && view.operational_status === "PAUSED_RECOVERY" && (
               <button className="h-11 rounded-lg bg-amber-500 px-4 text-sm font-semibold text-black"
-                      onClick={() => run(() => api.resume(roomId))}>繼續牌局</button>
+                      onClick={() => run(() => api.resume(roomId))}>{t("room.resume")}</button>
             )}
             {mySeat && (<>
-              <button className={btnGhost} onClick={() => run(() => api.sitOut(roomId,
-                mySeat.participation_state !== "SITTING_OUT" && !mySeat.sit_out_next))}>
-                {mySeat.participation_state === "SITTING_OUT" || mySeat.sit_out_next ? "回到牌局" : "暫離"}
+              <button className={away ? "h-11 rounded-lg bg-emerald-600 px-4 text-sm font-semibold" : btnGhost}
+                      onClick={() => run(() => api.sitOut(roomId, !away))}>
+                {away ? t("room.back_in") : t("room.sit_out")}
               </button>
-              <button className={btnGhost} onClick={() => setTopup(true)}>補碼</button>
+              <button className={btnGhost} onClick={() => setTopup(true)}>{t("room.topup")}</button>
               <button className={btnGhost} onClick={() => {
-                if (window.confirm(inHand ? "牌局中離桌會自動棄牌（若可棄牌），結算後結帳。確定？" : "離桌並結帳？"))
+                if (window.confirm(inHand ? t("room.leave_confirm_hand") : t("room.leave_confirm")))
                   run(() => api.leave(roomId));
-              }}>離桌</button>
-              {me?.topups.filter((t) => t.status !== "APPLIED").map((t) => (
-                <span key={t.request_id} className="text-xs text-neutral-400">
-                  補碼 {chips(t.amount)}：{t.status === "REQUESTED" ? "待核准" : "下一手套用"}
+              }}>{t("room.leave")}</button>
+              {me?.topups.filter((tp) => tp.status !== "APPLIED").map((tp) => (
+                <span key={tp.request_id} className="text-xs text-neutral-400">
+                  {tp.status === "REQUESTED" ? t("room.topup_requested", { n: chips(tp.amount) })
+                    : t("room.topup_approved", { n: chips(tp.amount) })}
                 </span>
               ))}
             </>)}
             {!mySeat && me && view.status !== "CLOSED" && (
-              <span className="text-xs text-neutral-400">觀戰中 · 點空位坐下</span>
+              <span className="text-xs text-neutral-400">{t("room.spectating")}</span>
             )}
           </div>
 
@@ -205,7 +357,7 @@ export default function RoomPage() {
           <div className="flex h-[70dvh] flex-col rounded-t-2xl bg-neutral-950 pb-[env(safe-area-inset-bottom)]"
                onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-center py-1">
-              <button onClick={() => setDrawer(false)} className="h-6 w-16" aria-label="關閉面板">
+              <button onClick={() => setDrawer(false)} className="h-6 w-16" aria-label={t("room.close_panel")}>
                 <span className="mx-auto block h-1 w-10 rounded bg-neutral-600" />
               </button>
             </div>
@@ -215,26 +367,30 @@ export default function RoomPage() {
       )}
 
       {sitAt !== null && (
-        <AmountDialog title={`坐到 #${sitAt} 並買入`} min={view.config.min_buyin} max={view.config.max_buyin}
+        <AmountDialog title={t("room.sit_title", { n: sitAt })} min={view.config.min_buyin} max={view.config.max_buyin}
                       initial={Math.min(view.config.max_buyin, Math.max(view.config.min_buyin, view.config.bb * 100))}
-                      confirm="坐下" onClose={() => setSitAt(null)}
+                      confirm={t("room.sit_confirm")} onClose={() => setSitAt(null)}
                       onSubmit={async (n) => {
                         try { await api.sit(roomId, sitAt, n); return null; } catch (e) { return errorText(e); }
                       }} />
       )}
       {topup && mySeat && (
-        <AmountDialog title="申請補碼（需房主核准）" min={1}
+        <AmountDialog title={t("room.topup_title")} min={1}
                       max={Math.max(1, view.config.max_buyin - mySeat.stack)}
-                      initial={Math.max(1, view.config.max_buyin - mySeat.stack)} confirm="送出申請"
+                      initial={Math.max(1, view.config.max_buyin - mySeat.stack)} confirm={t("room.topup_confirm")}
                       onClose={() => setTopup(false)}
                       onSubmit={async (n) => {
                         try { await api.topup(roomId, n); return null; } catch (e) { return errorText(e); }
                       }} />
       )}
       {toast && (
-        <div role="status" className="fixed left-1/2 top-16 z-50 -translate-x-1/2 rounded-lg bg-neutral-800 px-4 py-2 text-sm shadow-lg">
+        <button role="status" onClick={() => {
+                  if (toast.startsWith("💬")) { setTab("chat"); setDrawer(true); }
+                  setToast(null);
+                }}
+                className="toast-in fixed left-1/2 top-16 z-50 max-w-[92vw] -translate-x-1/2 truncate rounded-xl bg-neutral-800 px-4 py-2 text-sm shadow-xl ring-1 ring-white/10">
           {toast}
-        </div>
+        </button>
       )}
     </div>
   );

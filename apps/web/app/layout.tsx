@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { Providers } from "@/components/Providers";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -15,8 +16,8 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="zh-Hant">
-      <body className="min-h-dvh antialiased">{children}</body>
+    <html lang="zh-Hant" suppressHydrationWarning>
+      <body className="min-h-dvh antialiased"><Providers>{children}</Providers></body>
     </html>
   );
 }

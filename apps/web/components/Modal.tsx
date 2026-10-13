@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect } from "react";
+import { useT } from "@/lib/i18n";
 
 export function Modal({ title, onClose, children }:
   { title: string; onClose: () => void; children: React.ReactNode }) {
+  const { t } = useT();
   useEffect(() => {
     const k = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", k);
@@ -16,7 +18,7 @@ export function Modal({ title, onClose, children }:
            onClick={(e) => e.stopPropagation()}>
         <div className="mb-3 flex items-center justify-between">
           <h2 className="font-semibold">{title}</h2>
-          <button onClick={onClose} className="h-11 w-11 rounded-full text-xl text-neutral-400" aria-label="關閉">×</button>
+          <button onClick={onClose} className="h-11 w-11 rounded-full text-xl text-neutral-400" aria-label={t("common.close")}>×</button>
         </div>
         {children}
       </div>
