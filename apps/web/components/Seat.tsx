@@ -103,10 +103,7 @@ export function Seat(p: SeatProps) {
             {p.isHost && <span title={t("table.host")} className="text-chip">♛</span>}
             {name}
           </span>
-          {/* compact seats: the blue frame marks "me" so the name keeps the room */}
-          {p.isMe && !c && (
-            <span className="shrink-0 rounded bg-sky-600 px-1 text-[10px] font-semibold leading-4 text-white">{t("table.me")}</span>
-          )}
+
         </div>
         <div className={`font-semibold tabular-nums text-chip ${c ? "text-xs leading-4" : "text-sm"}`}>{chips(stack)}</div>
         <div className={`tabular-nums leading-tight ${c ? "text-[9px]" : "text-[10px]"} ${
@@ -134,6 +131,10 @@ export function Seat(p: SeatProps) {
         )}
         {p.blind && (
           <span className="absolute -left-2 -top-2 rounded-full bg-sky-600 px-1 text-[9px] font-bold">{p.blind}</span>
+        )}
+        {/* "you" tag on the top edge, so the name line keeps its room */}
+        {p.isMe && !cardRow && (
+          <span className="absolute -top-2 left-1/2 -translate-x-1/2 rounded bg-sky-600 px-1 text-[9px] font-semibold leading-[14px] text-white">{t("table.me")}</span>
         )}
       </div>
     </div>

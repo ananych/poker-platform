@@ -24,6 +24,7 @@ from app.realtime.gateway import gateway
 from app.realtime.jobs import sweeper_loop
 from app.services import publisher, table
 from app.services.timers import timers
+from app.version import VERSION
 
 log = logging.getLogger("poker")
 
@@ -60,7 +61,7 @@ def create_app() -> FastAPI:
     logging.basicConfig(level=logging.INFO)
     app = FastAPI(
         title="Private Texas Hold'em API",
-        version="0.1.0",
+        version=VERSION,
         lifespan=lifespan,
         docs_url="/api/docs" if settings.is_dev else None,
         openapi_url="/api/openapi.json",

@@ -131,8 +131,14 @@ export function btn(p: Player, name: string | RegExp) {
   return p.page.getByRole("button", { name, exact: typeof name === "string" });
 }
 
-/** Perform a poker action through the action bar. */
+/** Perform a poker action through the action bar, then wait for the turn to move on. */
 export async function act(p: Player, a: "fold" | "check" | "call" | "checkOrCall" | "allin" | "potRaise" | "halfPot") {
+  await actOnce(p, a);
+  // don't let the next whoseTurn() pick this page again from a not-yet-updated view
+  await turnText(p).waitFor({ state: "hidden", timeout: 1500 }).catch(() => {});
+}
+
+async function actOnce(p: Player, a: "fold" | "check" | "call" | "checkOrCall" | "allin" | "potRaise" | "halfPot") {
   const page = p.page;
   await expect(turnText(p)).toBeVisible();
   // labels in both UI languages

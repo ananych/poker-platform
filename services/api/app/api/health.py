@@ -18,6 +18,14 @@ class _State:
 state = _State()
 
 
+@router.get("/api/v1/version")
+async def version():
+    """Which release/commit this API process runs (shown in the web UI)."""
+    from app.version import info
+
+    return info()
+
+
 @router.get("/health/live")
 async def live():
     return {"status": "ok"}

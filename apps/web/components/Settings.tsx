@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useT } from "@/lib/i18n";
 import { getPrefs, requestNotify, setPrefs, subscribePrefs, unlockAudio } from "@/lib/sound";
+import { useVersions, versionLabel } from "@/lib/version";
 
 const serverPrefs = { music: false, sfx: true, notify: false };
 
@@ -26,6 +27,7 @@ export function SettingsMenu() {
   const prefs = useSoundPrefs();
   const [open, setOpen] = useState(false);
   const [denied, setDenied] = useState(false);
+  const versions = useVersions();
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
@@ -82,6 +84,12 @@ export function SettingsMenu() {
             <p className="text-[11px] leading-snug text-neutral-500">
               {denied ? t("set.notify_denied") : t("set.notify_hint")}
             </p>
+          </div>
+          <div className="space-y-0.5 border-t border-white/10 pt-2 text-[11px] tabular-nums text-neutral-400" data-testid="versions">
+            <div className="text-neutral-300">{t("ver.title")}</div>
+            <div>{t("ver.web")} {versionLabel(versions.web)}</div>
+            <div>{t("ver.api")} {versionLabel(versions.api)}</div>
+            {versions.mismatch && <div className="text-amber-400">{t("ver.mismatch")}</div>}
           </div>
         </div>
       )}

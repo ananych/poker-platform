@@ -242,6 +242,13 @@ const zh = {
   "replay.pause": "暫停",
   "replay.note": "回放只顯示當時公開的資訊；攤牌時所有人亮牌，棄牌者的手牌不會顯示。",
 
+  // version
+  "ver.title": "版本",
+  "ver.web": "前端",
+  "ver.api": "後端",
+  "ver.mismatch": "前後端版本不同（可能有一邊還在部署）",
+  "ver.update": "有新版本 {v}，點這裡重新整理",
+
   // settings
   "set.title": "設定",
   "set.language": "語言",
@@ -521,6 +528,12 @@ const en: Record<MsgKey, string> = {
   "replay.play": "Play",
   "replay.pause": "Pause",
   "replay.note": "Replays show only what was public at the time: all live hands are shown at showdown, folded hands never are.",
+
+  "ver.title": "Version",
+  "ver.web": "Web",
+  "ver.api": "API",
+  "ver.mismatch": "Web and API differ (one may still be deploying)",
+  "ver.update": "New version {v} is live — tap to reload",
 
   "set.title": "Settings",
   "set.language": "Language",

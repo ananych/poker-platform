@@ -22,6 +22,14 @@ cd ~/Desktop/Git/poker-platform
 
 照 [`docs/runbooks/railway.md`](docs/runbooks/railway.md)：Postgres ＋ `api`、`web`、`gateway` 三個服務，只有 gateway 對外（同一個網域，cookie 與 WebSocket 才能正常運作）。
 
+## 🔖 版本號
+
+- 大廳最下方、牌桌右上角 ⚙ 設定裡都會顯示「前端 / 後端」的版本，例如 `v0.3.0 · 25f3d11`。
+  後面那串就是 GitHub 上的 commit，推上去、Railway 部署完成後應該會變成最新那一個。
+- 前後端 commit 不同時，⚙ 裡會提示「可能有一邊還在部署」。
+- 已經開著的分頁偵測到新版前端上線，最上方會出現「有新版本，點這裡重新整理」。
+- 發新版本時改版號（前後端一起改）：`python3 scripts/bump_version.py 0.3.1`
+
 ## 架構（SDD §1、§14）
 
 Modular monolith：Next.js/TypeScript/Tailwind 前端 + FastAPI/Python 後端 + PostgreSQL，單一常駐後端實例、單一 worker。

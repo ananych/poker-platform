@@ -524,3 +524,25 @@ test("invite rotation, nickname change, re-sitting after leaving", async ({ brow
   expect(row.invested).toBe(1300);
   expect(row.net).toBe(0);
 });
+
+// ---------------------------------------------------------------------------
+test("version shown in lobby + settings; open tabs offer reload after a deploy", async ({ browser }) => {
+  const { players } = await table(browser, ["Ann", "Bob"]);
+  const [ann] = players;
+  await ann.page.goto("/");
+  const lobby = ann.page.getByTestId("versions");
+  await expect(lobby).toContainText(/前端 v\d+\.\d+\.\d+ · [0-9a-f]{7}/);
+  await expect(lobby).toContainText(/後端 v\d+\.\d+\.\d+ · [0-9a-f]{7}/);
+  await ann.page.goBack();
+  await btn(ann, "設定").click();
+  const box = ann.page.getByTestId("versions");
+  await expect(box).toContainText(/前端 v\d+\.\d+\.\d+/);
+  await expect(box).toContainText(/後端 v\d+\.\d+\.\d+/);
+  await shot(ann.page, "f13-versions");
+  await ann.page.keyboard.press("Escape");
+  // a newer web build gets deployed while the tab is open
+  await ann.page.route("**/version", (route) =>
+    route.fulfill({ json: { version: "9.9.9", commit: "abcdef1", built_at: null } }));
+  await ann.page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await expect(ann.page.getByRole("status").filter({ hasText: "有新版本 v9.9.9 · abcdef1" })).toBeVisible();
+});

@@ -8,7 +8,10 @@ RUN npm ci
 FROM node:22-alpine AS build
 WORKDIR /app
 ARG NEXT_PUBLIC_API_BASE=""
-ENV NEXT_PUBLIC_API_BASE=$NEXT_PUBLIC_API_BASE NEXT_TELEMETRY_DISABLED=1
+# Railway passes this on GitHub deploys; it is baked into the bundle as the build id
+ARG RAILWAY_GIT_COMMIT_SHA=""
+ENV NEXT_PUBLIC_API_BASE=$NEXT_PUBLIC_API_BASE NEXT_TELEMETRY_DISABLED=1 \
+    RAILWAY_GIT_COMMIT_SHA=$RAILWAY_GIT_COMMIT_SHA
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run build

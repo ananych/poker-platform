@@ -7,12 +7,14 @@ import { btnGhost, btnPrimary, inputCls } from "@/components/Modal";
 import { inviteStorageKey } from "@/components/HostPanel";
 import { api, errorText } from "@/lib/api";
 import { configError } from "@/lib/poker";
+import { useVersions, versionLabel } from "@/lib/version";
 import { LangToggle, useT, type MsgKey } from "@/lib/i18n";
 import type { Me } from "@/lib/types";
 
 export default function Lobby() {
   const router = useRouter();
   const { t } = useT();
+  const versions = useVersions();
   const [me, setMe] = useState<Me | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [nickname, setNickname] = useState("");
@@ -114,6 +116,9 @@ export default function Lobby() {
 
       <footer className="mt-auto text-xs leading-relaxed text-neutral-500">
         {t("app.disclaimer")}
+        <div className="mt-2 tabular-nums text-neutral-600" data-testid="versions">
+          {t("ver.web")} {versionLabel(versions.web)} · {t("ver.api")} {versionLabel(versions.api)}
+        </div>
       </footer>
     </main>
   );

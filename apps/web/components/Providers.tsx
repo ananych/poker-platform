@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { UpdateBanner } from "@/components/UpdateBanner";
 import { I18nProvider } from "@/lib/i18n";
 import { unlockAudio } from "@/lib/sound";
 
@@ -15,5 +16,5 @@ export function Providers({ children }: { children: React.ReactNode }) {
       window.removeEventListener("keydown", go);
     };
   }, []);
-  return <I18nProvider>{children}</I18nProvider>;
+  return <I18nProvider>{children}<UpdateBanner /></I18nProvider>;
 }
